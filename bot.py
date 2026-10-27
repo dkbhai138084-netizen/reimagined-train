@@ -1,20 +1,19 @@
 #CREDIT - @CXXWIO
-#MAIN CHANNEL - @SHIVAXPORTAL #
+#MAIN CHANNEL - SHIVA HOSTING #
 
 import os
+import re
 import sys
 import time
 import json
 import zipfile
 import subprocess
+import shutil
 import threading
 import html
 import psutil
-import random
-import qrcode
-from datetime import datetime, timedelta
-from io import BytesIO
-from urllib.parse import quote
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import datetime
 
 import telebot
 from telebot.types import (
@@ -27,823 +26,5333 @@ from telebot.types import (
 # ============================================================
 # BOT CONFIG
 # ============================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8823229372:AAGy2B_YXXE74JbZJGhhUFM35Mdw0wPVQqc").strip()
 OWNER_ID = int(os.getenv("OWNER_ID", "8675132585"))
 
 STORAGE_DIR = "user_files"
 UPLOAD_DIR = os.path.join(STORAGE_DIR, "uplo556ads")
 DATA_FILE = os.path.join(STORAGE_DIR, "users.json")
-CUSTOM_QR_FILE = os.path.join(STORAGE_DIR, "custom_qr.jpg")
 
 os.makedirs(STORAGE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-UPI_ID = "shiva-singhs@fam"
-UPI_NAME = "Shiva Singh"
-
-SUBSCRIPTION_PLANS = {
-    'weekly':  {
-        'name': 'ᴡᴇᴇᴋʟʏ ᴘʟᴀɴ', 'emoji': '🟢', 'days': 7, 'price': '₹39', 'amt': '39.00', 
-        'files': 3, 'upload': '10 MB', 'desc': '7 ᴅᴀʏꜱ ᴏꜰ ᴘʀᴇᴍɪᴜᴍ ʜᴏꜱᴛɪɴɢ'
-    },
-    'monthly': {
-        'name': 'ᴍᴏɴᴛʜʟʏ ᴘʟᴀɴ', 'emoji': '🔵', 'days': 30, 'price': '₹99', 'amt': '99.00', 
-        'files': 7, 'upload': '30 MB', 'desc': '30 ᴅᴀʏꜱ ᴏꜰ ᴘʀᴇᴍɪᴜᴍ ʜᴏꜱᴛɪɴɢ'
-    },
-    'yearly':  {
-        'name': 'ʏᴇᴀʀʟʏ ᴘʟᴀɴ', 'emoji': '🟣', 'days': 365, 'price': '₹509', 'amt': '509.00', 
-        'files': 13, 'upload': '60 MB', 'desc': '365 ᴅᴀʏꜱ ᴏꜰ ᴘʀᴇᴍɪᴜᴍ ʜᴏꜱᴛɪɴɢ'
-    }
-}
-
 if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, "w") as f:
-        json.dump({"_settings": {"bot_password": "SHIVAGOD", "admins": []}}, f)
+        json.dump({}, f)
 
 # ============================================================
-# GLOBALS & PREMIUM EMOJIS
+# GLOBALS
 # ============================================================
+
 users = {}
-settings = {"bot_password": "SHIVAGOD", "admins": []}
+
 active_scripts = {}
 logs_store = {}
-payment_sessions = {}
+
+# Global re-entrant lock protecting users / active_scripts / logs_store
+STATE_LOCK = threading.RLock()
+
+# One lock per (user, script) so two starts never race each other
+SCRIPT_LOCKS = {}
+
+
+def locked(fn):
+    """Run the wrapped function while holding STATE_LOCK."""
+
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+
+        with STATE_LOCK:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+install_waiting_users = {}
+env_waiting_users = {}
+
 bot_start_time = time.time()
 START_TIME = datetime.now()
 
-# Premium IDs
-PE_ROCKET    = "6215062030886378130"
-PE_CROWN     = "6235252066554484059"
-PE_USER      = "5877443460725739250"
-PE_FOLDER    = "5210952531676504517"
-PE_CHECK     = "6215311461112094002"
-PE_CROSS     = "5942877472163892475"
-PE_WARNING   = "6147565374289220368"
-PE_LOCK      = "5291873529464122510"
-PE_DIAMOND   = "6239868537922394674"
-PE_MONEY     = "6235459831302460476"
-PE_BOT       = "5427168083074628963"
-PE_GIFT      = "5287684458881756303"
-PE_FIRE      = "6320894534775476960"
-PE_STAR      = "6321171873698681876"
-PE_SHIELD    = "6215311461112094002" 
-PE_PHONE     = "5877443460725739250"
-PE_ADMIN     = "6235252066554484059"
-PE_UPLOAD    = "6215062030886378130"
-PE_SERVER    = "6321171873698681876"
+RECOMMENDED_PACKAGES = [
+    "pip",
+    "setuptools",
+    "wheel",
+    "requests",
+    "numpy",
+    "pandas",
+    "flask",
+    "aiohttp",
+    "pyrogram",
+    "python-dotenv",
+    "beautifulsoup4",
+    "lxml",
+    "pillow",
+    "matplotlib",
+    "scipy",
+    "scikit-learn",
+    "pytest"
+]
+
+PYTG_CALLS_PACKAGE = "git+https://github.com/pytgcalls/pytgcalls.git"
+
+# ============================================================
+# PREMIUM EMOJI
+# ============================================================
+
+PREMIUM_EMOJI_IDS = [
+
+    # Existing Premium Emojis
+    "5289722755871162900",
+    "5372849966689566579",
+    "5359664288241829619",
+    "5445033158456145975",
+    "5445092669522996408",
+    "5445358884480916784",
+    "5445307250384075361",
+    "5447602197439218445",
+    "6147460667281511517",
+    "6235459831302460476",
+    "6244492465353529537",
+    "6318817991102305543",
+
+    # New Premium Emojis
+    "5231200819986047254",
+    "5944970130554359187",
+    "6120548140211770562",
+    "4987977590812705943",
+    "5416081784641168838",
+    "6321171873698681876",
+    "5915556996215476302",
+    "5877443460725739250",
+    "4990298741463319592",
+    "5462956611033117422",
+    "6231214251835397322",
+    "6282846669335702032",
+    "5210952531676504517",
+    "6129639980387015660",
+]
+
+PE_FIRE = PREMIUM_EMOJI_IDS[0]
+PE_STAR = PREMIUM_EMOJI_IDS[1]
+PE_ROCKET = PREMIUM_EMOJI_IDS[2]
+PE_CROWN = PREMIUM_EMOJI_IDS[3]
+PE_SHIELD = PREMIUM_EMOJI_IDS[4]
+PE_MONEY = PREMIUM_EMOJI_IDS[5]
+PE_PHONE = PREMIUM_EMOJI_IDS[6]
+PE_CHECK = PREMIUM_EMOJI_IDS[7]
+PE_CROSS = PREMIUM_EMOJI_IDS[8]
+PE_WARNING = PREMIUM_EMOJI_IDS[9]
+PE_LOCK = PREMIUM_EMOJI_IDS[10]
+PE_GIFT = PREMIUM_EMOJI_IDS[11]
+
+PE_APPROVE = PREMIUM_EMOJI_IDS[12]
+PE_USER = PREMIUM_EMOJI_IDS[13]
+PE_ADMIN = PREMIUM_EMOJI_IDS[14]
+PE_UPLOAD = PREMIUM_EMOJI_IDS[15]
+PE_FOLDER = PREMIUM_EMOJI_IDS[16]
+PE_SETTINGS = PREMIUM_EMOJI_IDS[17]
+PE_SERVER = PREMIUM_EMOJI_IDS[18]
+PE_DIAMOND = PREMIUM_EMOJI_IDS[19]
+PE_BOT = PREMIUM_EMOJI_IDS[20]
+
 
 def pe(emoji_id, fallback="💎"):
+    """
+    Telegram custom premium emoji HTML.
+    """
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
 
 def safe_html(value):
     return html.escape(str(value), quote=False)
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+
+def premium_header(title, emoji_id=PE_CROWN, fallback="👑"):
+    return (
+        f"{pe(emoji_id, fallback)} "
+        f"<b>{safe_html(title)}</b>"
+    )
+
+
+# ============================================================
+# TELEGRAM BOT INIT
+# ============================================================
+
+bot = telebot.TeleBot(
+    BOT_TOKEN,
+    parse_mode=None
+)
+
 
 # ============================================================
 # DATA PERSISTENCE
 # ============================================================
+
+@locked
 def save_data():
     try:
         temp_file = DATA_FILE + ".tmp"
-        data_to_save = {str(k): v for k, v in users.items()}
-        data_to_save["_settings"] = settings
+
         with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(data_to_save, f, indent=4, ensure_ascii=False)
+            payload = None
+
+            for _attempt in range(5):
+
+                try:
+
+                    payload = json.dumps(
+                        users,
+                        indent=4,
+                        ensure_ascii=False
+                    )
+
+                    break
+
+                except RuntimeError:
+
+                    # dict changed size while serialising - retry
+                    time.sleep(0.05)
+
+            if payload is None:
+                raise RuntimeError("users changed during save")
+
+            f.write(payload)
+
         os.replace(temp_file, DATA_FILE)
+
     except Exception as e:
         print(f"Save Error: {e}")
 
+
+@locked
 def load_data():
-    global users, settings
+
+    global users
+
     if not os.path.exists(DATA_FILE):
         users = {}
         return
+
     try:
+
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
+
         users.clear()
+
         for key, value in raw_data.items():
-            if key == "_settings":
-                if isinstance(value, dict):
-                    settings.update(value)
+
+            try:
+                uid = int(key)
+            except:
                 continue
-            try: uid = int(key)
-            except: continue
-            if not isinstance(value, dict): value = {}
+
+            if not isinstance(value, dict):
+                value = {}
+
             value.setdefault("files", [])
-            value.setdefault("approved", uid == OWNER_ID)
-            value.setdefault("rejected", False)
-            value.setdefault("password_verified", uid == OWNER_ID)
-            value.setdefault("plan_expiry", "")
-            value.setdefault("banned", False)
+            value.setdefault("env_vars", {})
+
+            value.setdefault(
+                "approved",
+                uid == OWNER_ID
+            )
+
+            value.setdefault(
+                "rejected",
+                False
+            )
+
             users[uid] = value
+
     except Exception as e:
+
         print(f"Load Error: {e}")
+
         users = {}
-    settings.setdefault("bot_password", "SHIVAGOD")
-    settings.setdefault("admins", [])
+
 
 load_data()
 
-# ============================================================
-# USER / APPROVAL / ADMIN SYSTEM
-# ============================================================
-def ensure_user(uid):
-    if uid not in users:
-        users[uid] = {
-            "files": [], "approved": uid == OWNER_ID, "rejected": False,
-            "password_verified": uid == OWNER_ID, "plan_expiry": "", "banned": False
-        }
-        save_data()
-    else:
-        users[uid].setdefault("files", [])
-        users[uid].setdefault("approved", uid == OWNER_ID)
-        users[uid].setdefault("rejected", False)
-        users[uid].setdefault("password_verified", uid == OWNER_ID)
-        users[uid].setdefault("plan_expiry", "")
-        users[uid].setdefault("banned", False)
 
-def is_owner(uid): return uid == OWNER_ID
-def is_admin(uid): return uid == OWNER_ID or uid in settings.get("admins", [])
-def is_banned(uid):
-    ensure_user(uid)
-    return users[uid].get("banned", False)
+# ============================================================
+# USER / APPROVAL SYSTEM
+# ============================================================
+
+@locked
+def ensure_user(uid):
+
+    if uid not in users:
+
+        users[uid] = {
+            "files": [],
+            "env_vars": {},
+            "approved": uid == OWNER_ID,
+            "rejected": False
+        }
+
+        save_data()
+
+    else:
+
+        users[uid].setdefault("files", [])
+        users[uid].setdefault("env_vars", {})
+        users[uid].setdefault(
+            "approved",
+            uid == OWNER_ID
+        )
+        users[uid].setdefault(
+            "rejected",
+            False
+        )
+
+
+def is_owner(uid):
+
+    return uid == OWNER_ID
+
 
 def is_approved(uid):
-    if uid == OWNER_ID: return True
+
+    if uid == OWNER_ID:
+        return True
+
     ensure_user(uid)
+
     return users[uid].get("approved", False)
 
-def is_premium(uid):
-    if uid == OWNER_ID: return True
-    exp = users.get(uid, {}).get("plan_expiry", "")
-    if exp:
-        try: return datetime.fromisoformat(exp) > datetime.now()
-        except: return False
-    return False
 
-def get_user_file_limit(uid):
-    if is_owner(uid): return 999
-    if is_premium(uid): return 15
-    return 2
+def approval_buttons(uid):
+
+    markup = InlineKeyboardMarkup()
+
+    markup.row(
+        InlineKeyboardButton(
+            "✅ APPROVE",
+            callback_data=f"approve_{uid}"
+        ),
+        InlineKeyboardButton(
+            "❌ REJECT",
+            callback_data=f"reject_{uid}"
+        )
+    )
+
+    return markup
+
+
+def send_approval_request(message):
+
+    uid = message.from_user.id
+
+    first_name = (
+        message.from_user.first_name
+        or "Unknown"
+    )
+
+    username = message.from_user.username
+
+    if username:
+        username_text = f"@{username}"
+    else:
+        username_text = "No username"
+
+    text = (
+        f"{pe(PE_ADMIN, '👑')} "
+        f"<b>NEW USER APPROVAL</b>\n\n"
+
+        f"{pe(PE_USER, '👤')} "
+        f"<b>Name:</b> "
+        f"{safe_html(first_name)}\n"
+
+        f"{pe(PE_PHONE, '🆔')} "
+        f"<b>User ID:</b> "
+        f"<code>{uid}</code>\n"
+
+        f"{pe(PE_BOT, '🤖')} "
+        f"<b>Username:</b> "
+        f"{safe_html(username_text)}\n\n"
+
+        f"{pe(PE_WARNING, '⚠️')} "
+        f"<b>Status:</b> Pending Approval"
+    )
+
+    try:
+
+        bot.send_message(
+            OWNER_ID,
+            text,
+            reply_markup=approval_buttons(uid),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        print(
+            f"Approval notification error: {e}"
+        )
+
 
 def approval_required(message):
-    uid = message.from_user.id
-    if is_owner(uid): return False
-    ensure_user(uid)
-    if is_banned(uid):
-        bot.reply_to(message, f"{pe(PE_CROSS, '🚫')} <b>ʏᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ</b>\n\n{pe(PE_LOCK, '🔒')} ʏᴏᴜʀ ᴀᴄᴄᴇꜱꜱ ʜᴀꜱ ʙᴇᴇɴ ʀᴇᴠᴏᴋᴇᴅ ʙʏ ᴛʜᴇ ᴏᴡɴᴇʀ.", parse_mode="HTML")
-        return True
-    return False
 
-def verify_password(message):
     uid = message.from_user.id
-    text = (message.text or "").strip()
+
+    if is_owner(uid):
+        return False
+
+    if is_approved(uid):
+        return False
+
     ensure_user(uid)
-    if text == settings.get("bot_password", "SHIVAGOD"):
-        users[uid]["password_verified"] = True
-        users[uid]["approved"] = True
-        save_data()
-        send_welcome_message(message)
-    else:
-        bot.reply_to(message, f"{pe(PE_CROSS, '❌')} ɪɴᴄᴏʀʀᴇᴄᴛ ᴘᴀꜱꜱᴡᴏʀᴅ.\nꜱᴇɴᴅ /start ᴛᴏ ᴛʀʏ ᴀɢᴀɪɴ.", parse_mode="HTML")
+
+    bot.reply_to(
+        message,
+        (
+            f"{pe(PE_LOCK, '🔐')} "
+            f"<b>ACCESS PENDING</b>\n\n"
+
+            f"{pe(PE_ADMIN, '👑')} "
+            f"Your account is waiting for "
+            f"<b>Owner Approval</b>.\n\n"
+
+            f"{pe(PE_STAR, '⭐')} "
+            f"Please wait until the owner approves "
+            f"your account."
+        ),
+        parse_mode="HTML"
+    )
+
+    return True
+
+
+# ============================================================
+# OWNER NOTIFICATION
+# ============================================================
+
+def notify_owner(text, index=0):
+
+    try:
+
+        emoji_id = PREMIUM_EMOJI_IDS[
+            index % len(PREMIUM_EMOJI_IDS)
+        ]
+
+        bot.send_message(
+            OWNER_ID,
+            f"{pe(emoji_id, '🔔')} {text}",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        print(
+            f"Owner notification error: {e}"
+        )
+
 
 # ============================================================
 # UTILITIES
 # ============================================================
+
 def uptime():
-    seconds = int(time.time() - bot_start_time)
-    days = seconds // 86400
-    hours = (seconds % 86400) // 3600
-    mins = (seconds % 3600) // 60
-    secs = seconds % 60
-    return f"{days}ᴅ {hours}ʜ {mins}ᴍ {secs}ꜱ"
+
+    seconds = int(
+        time.time() - bot_start_time
+    )
+
+    return (
+        f"{seconds // 3600}h "
+        f"{(seconds % 3600) // 60}m "
+        f"{seconds % 60}s"
+    )
+
 
 def user_folder(uid):
-    path = os.path.join(UPLOAD_DIR, str(uid))
-    os.makedirs(path, exist_ok=True)
+
+    path = os.path.join(
+        UPLOAD_DIR,
+        str(uid)
+    )
+
+    os.makedirs(
+        path,
+        exist_ok=True
+    )
+
     return path
 
-def get_system_info():
-    cpu_freq = psutil.cpu_freq()
-    cpu_ghz = cpu_freq.current / 1000 if cpu_freq else 0
-    ram = psutil.virtual_memory()
-    return cpu_ghz, ram.total / (1024 ** 3), ram.available / (1024 ** 3)
 
-def generate_upi_qr(upi_id, amount, name="Payment"):
-    upi_link = f"upi://pay?pa={upi_id}&pn={quote(name)}&am={amount}&cu=INR"
-    qr = qrcode.QRCode(version=1, box_size=10, border=4)
-    qr.add_data(upi_link)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    bio = BytesIO()
-    img.save(bio, format="PNG")
-    bio.seek(0)
-    return bio
+def get_system_info():
+
+    cpu_freq = psutil.cpu_freq()
+
+    if cpu_freq:
+        cpu_ghz = cpu_freq.current / 1000
+    else:
+        cpu_ghz = 0
+
+    ram = psutil.virtual_memory()
+
+    total_ram_gb = (
+        ram.total /
+        (1024 ** 3)
+    )
+
+    free_ram_gb = (
+        ram.available /
+        (1024 ** 3)
+    )
+
+    return (
+        cpu_ghz,
+        total_ram_gb,
+        free_ram_gb
+    )
+
+
+def install_requirements(folder):
+
+    req_file = os.path.join(
+        folder,
+        "requirements.txt"
+    )
+
+    if os.path.exists(req_file):
+
+        try:
+
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-r",
+                    req_file
+                ]
+            )
+
+        except Exception as e:
+
+            print(
+                f"Requirements install error: {e}"
+            )
+
+
+# ============================================================
+# .ENV HELPERS
+# ============================================================
+
+ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def parse_env_text(text):
+    """Parse KEY=VALUE lines. Returns dict."""
+
+    result = {}
+
+    for raw in (text or "").splitlines():
+
+        line = raw.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+
+        key = key.strip()
+        value = value.strip()
+
+        if (
+            len(value) >= 2
+            and value[0] == value[-1]
+            and value[0] in ("'", '"')
+        ):
+            value = value[1:-1]
+
+        if ENV_KEY_RE.match(key):
+            result[key] = value
+
+    return result
+
+
+def read_env_file(uid):
+
+    path = os.path.join(user_folder(uid), ".env")
+
+    if not os.path.exists(path):
+        return {}
+
+    try:
+
+        with open(path, "r", encoding="utf-8") as f:
+            return parse_env_text(f.read())
+
+    except Exception as e:
+
+        print(f".env read error: {e}")
+
+        return {}
+
+
+def get_file_env(uid, filename):
+
+    ensure_user(uid)
+
+    return users[uid].setdefault(
+        "env_vars",
+        {}
+    ).get(filename, {})
+
+
+@locked
+def write_env_file(uid, filename):
+    """Write the saved variables of a file into user_folder/.env"""
+
+    env_vars = get_file_env(uid, filename)
+
+    path = os.path.join(user_folder(uid), ".env")
+
+    try:
+
+        lines = []
+
+        for k, v in env_vars.items():
+
+            v = str(v)
+
+            if re.search(r"[\s#'\"\\]", v):
+                v = (
+                    '"'
+                    + v.replace("\\", "\\\\").replace('"', '\\"')
+                    + '"'
+                )
+
+            lines.append(f"{k}={v}")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + ("\n" if lines else ""))
+
+    except Exception as e:
+
+        print(f".env write error: {e}")
+
+
+@locked
+def set_env_vars(uid, filename, new_vars):
+
+    ensure_user(uid)
+
+    store = users[uid].setdefault("env_vars", {})
+    store.setdefault(filename, {}).update(new_vars)
+
+    save_data()
+    write_env_file(uid, filename)
+
+
+@locked
+def clear_env_vars(uid, filename):
+
+    ensure_user(uid)
+
+    users[uid].setdefault("env_vars", {}).pop(filename, None)
+
+    save_data()
+    write_env_file(uid, filename)
+
+
+def mask_value(key, value):
+
+    value = str(value)
+
+    if key in ("ADMIN_ID", "OWNER_ID", "API_ID"):
+        return value
+
+    if len(value) <= 6:
+        return "*" * len(value)
+
+    return value[:4] + "*" * 6 + value[-2:]
+
 
 # ============================================================
 # SCRIPT RUNNING
 # ============================================================
-def run_script_thread(user_id, file_path):
-    try:
-        proc = subprocess.Popen([sys.executable, os.path.abspath(file_path)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        active_scripts.setdefault(user_id, {})[file_path] = proc
-        logs_store.setdefault(user_id, {})[file_path] = []
-        while True:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None: break
-            if line:
-                logs_store[user_id][file_path].append(line.strip())
-                logs_store[user_id][file_path] = logs_store[user_id][file_path][-50:]
-        proc.wait()
-    except Exception as e: print(f"Error in script {file_path}: {e}")
-    finally:
-        if user_id in active_scripts: active_scripts[user_id].pop(file_path, None)
 
-def start_script(user_id, file_path):
-    if file_path in active_scripts.get(user_id, {}): return False
-    threading.Thread(target=run_script_thread, args=(user_id, file_path), daemon=True).start()
+def kill_process_tree(proc):
+    """Kill a process and every child it spawned (no zombies left behind)."""
+
+    if proc is None:
+        return
+
+    try:
+        pid = proc.pid
+    except Exception:
+        return
+
+    parent = None
+
+    try:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        parent = None
+    except Exception:
+        parent = None
+
+    if parent is not None:
+
+        try:
+            children = parent.children(recursive=True)
+        except Exception:
+            children = []
+
+        for child in children:
+
+            try:
+                child.terminate()
+            except Exception:
+                pass
+
+        try:
+            _, alive = psutil.wait_procs(children, timeout=2)
+        except Exception:
+            alive = []
+
+        for child in alive:
+
+            try:
+                child.kill()
+            except Exception:
+                pass
+
+        try:
+            parent.terminate()
+        except Exception:
+            pass
+
+        try:
+            parent.wait(timeout=3)
+        except Exception:
+
+            try:
+                parent.kill()
+            except Exception:
+                pass
+
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+    try:
+        proc.wait(timeout=3)
+    except Exception:
+        pass
+
+
+def get_script_lock(user_id, file_path):
+
+    with STATE_LOCK:
+
+        return SCRIPT_LOCKS.setdefault(
+            (user_id, file_path),
+            threading.Lock()
+        )
+
+
+def stop_script(user_id, file_path):
+
+    with STATE_LOCK:
+
+        proc = active_scripts.get(user_id, {}).pop(file_path, None)
+
+    if not proc:
+        return False
+
+    kill_process_tree(proc)
+
     return True
 
+
+def append_log(user_id, file_path, line, proc=None):
+
+    with STATE_LOCK:
+
+        # Ignore output of an old instance that was replaced / stopped
+        if (
+            proc is not None
+            and active_scripts.get(user_id, {}).get(file_path) is not proc
+        ):
+            return
+
+        buf = logs_store.setdefault(
+            user_id,
+            {}
+        ).setdefault(file_path, [])
+
+        buf.append(line)
+
+        if len(buf) > 100:
+            del buf[:-100]
+
+
+def run_script_thread(
+    user_id,
+    file_path
+):
+
+    proc = None
+
+    try:
+
+        abs_path = os.path.abspath(file_path)
+        script_dir = os.path.dirname(abs_path)
+
+        # Isolated environment: never leak the hosting bot's credentials
+        child_env = os.environ.copy()
+        child_env.pop("BOT_TOKEN", None)
+        child_env.pop("OWNER_ID", None)
+        child_env.pop("PORT", None)
+
+        # Universal Python execution environment
+        child_env["PYTHONUNBUFFERED"] = "1"
+        child_env["PYTHONIOENCODING"] = "utf-8"
+
+        root_dir = os.path.abspath(user_folder(user_id))
+
+        py_paths = [script_dir]
+
+        if root_dir != script_dir:
+            py_paths.append(root_dir)
+
+        child_env["PYTHONPATH"] = os.pathsep.join(py_paths)
+
+        # .env file inside the user's folder
+        child_env.update(read_env_file(user_id))
+
+        # Per-file saved variables (take priority)
+        filename = os.path.relpath(
+            abs_path,
+            root_dir
+        ).replace(os.sep, "/")
+
+        with STATE_LOCK:
+
+            env_store = users.get(user_id, {}).get("env_vars", {})
+
+            saved = env_store.get(filename)
+
+            if saved is None:
+                saved = env_store.get(os.path.basename(abs_path), {})
+
+            saved = dict(saved)
+
+        child_env.update(
+            {str(k): str(v) for k, v in saved.items()}
+        )
+
+        with get_script_lock(user_id, file_path):
+
+            # Never keep two instances alive (prevents Telegram 409 Conflict)
+            with STATE_LOCK:
+
+                old = active_scripts.get(user_id, {}).pop(
+                    file_path,
+                    None
+                )
+
+            if old is not None:
+                kill_process_tree(old)
+
+            with STATE_LOCK:
+
+                logs_store.setdefault(
+                    user_id,
+                    {}
+                )[file_path] = []
+
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-u",
+                    abs_path
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                cwd=script_dir,
+                env=child_env
+            )
+
+            with STATE_LOCK:
+
+                active_scripts.setdefault(
+                    user_id,
+                    {}
+                )[file_path] = proc
+
+        # stdout + stderr (merged) -> logs
+        for line in iter(proc.stdout.readline, ""):
+
+            append_log(
+                user_id,
+                file_path,
+                line.rstrip("\r\n"),
+                proc
+            )
+
+        return_code = proc.wait()
+
+        with STATE_LOCK:
+
+            own = (
+                active_scripts.get(user_id, {}).get(file_path)
+                is proc
+            )
+
+        if own:
+
+            append_log(
+                user_id,
+                file_path,
+                f"[Process exited with code {return_code}]",
+                proc
+            )
+
+            if return_code != 0:
+
+                with STATE_LOCK:
+
+                    tail = "\n".join(
+                        logs_store.get(user_id, {}).get(file_path, [])
+                    )
+
+                if "ModuleNotFoundError" in tail or "No module named" in tail:
+
+                    append_log(
+                        user_id,
+                        file_path,
+                        "[Hint: install the missing package from "
+                        "the Package Installer, then run again]",
+                        proc
+                    )
+
+    except Exception as e:
+
+        print(
+            f"Error in script {file_path}: {e}"
+        )
+
+        append_log(
+            user_id,
+            file_path,
+            f"Launcher error: {e}"
+        )
+
+    finally:
+
+        # Only remove our own entry (a newer instance may have replaced it)
+        with STATE_LOCK:
+
+            if (
+                proc is not None
+                and active_scripts.get(user_id, {}).get(file_path) is proc
+            ):
+
+                active_scripts[user_id].pop(
+                    file_path,
+                    None
+                )
+
+        try:
+
+            if proc is not None and proc.stdout:
+                proc.stdout.close()
+
+        except Exception:
+            pass
+
+
+def start_script(
+    user_id,
+    file_path
+):
+
+    # Never run duplicate instances of the same file
+    with STATE_LOCK:
+
+        old = active_scripts.get(user_id, {}).pop(file_path, None)
+
+    if old is not None:
+        kill_process_tree(old)
+
+    thread = threading.Thread(
+        target=run_script_thread,
+        args=(
+            user_id,
+            file_path
+        ),
+        daemon=True
+    )
+
+    thread.start()
+
+
 # ============================================================
-# KEYBOARD (WITH COLORS)
+# INSTALLATION
 # ============================================================
+
+def live_install(
+    cmd_list,
+    chat_id,
+    message_id,
+    description
+):
+
+    try:
+
+        proc = subprocess.Popen(
+            cmd_list,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+
+        output_lines = []
+
+        while True:
+
+            line = proc.stdout.readline()
+
+            if line:
+
+                output_lines.append(
+                    line.rstrip()
+                )
+
+                if len(output_lines) > 8:
+                    output_lines = (
+                        output_lines[-8:]
+                    )
+
+                live_text = "\n".join(
+                    output_lines
+                )
+
+                try:
+
+                    bot.edit_message_text(
+                        (
+                            f"{pe(PE_UPLOAD, '📥')} "
+                            f"<b>{safe_html(description)}...</b>\n"
+                            f"<pre>{safe_html(live_text)}</pre>"
+                        ),
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        parse_mode="HTML"
+                    )
+
+                except:
+                    pass
+
+            if (
+                not line
+                and proc.poll() is not None
+            ):
+                break
+
+        full_output = "\n".join(
+            output_lines[-100:]
+        )
+
+        if proc.returncode == 0:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_CHECK, '✅')} "
+                    f"<b>{safe_html(description)} "
+                    f"installed!</b>\n\n"
+                    f"<pre>{safe_html(full_output)}</pre>"
+                ),
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode="HTML"
+            )
+
+        else:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>Installation Failed</b>\n\n"
+                    f"<pre>{safe_html(full_output)}</pre>"
+                ),
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+
+        try:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>Exception</b>\n\n"
+                    f"<code>{safe_html(e)}</code>"
+                ),
+                chat_id=chat_id,
+                message_id=message_id,
+                parse_mode="HTML"
+            )
+
+        except:
+            pass
+
+
+def install_recommended_packages(
+    chat_id,
+    message_id
+):
+
+    total = len(RECOMMENDED_PACKAGES)
+
+    for idx, pkg in enumerate(
+        RECOMMENDED_PACKAGES,
+        start=1
+    ):
+
+        live_install(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                pkg
+            ],
+            chat_id,
+            message_id,
+            f"{pkg} ({idx}/{total})"
+        )
+
+    live_install(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-deps",
+            PYTG_CALLS_PACKAGE
+        ],
+        chat_id,
+        message_id,
+        "pytgcalls (GitHub)"
+    )
+
+
+# ============================================================
+# MAIN KEYBOARD
+# ============================================================
+
 def control_buttons(uid=None):
-    markup = ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row(
-        KeyboardButton("🌏 ᴜᴘʟᴏᴀᴅ", style="primary"),
-        KeyboardButton("📁 ᴍʏ ꜰɪʟᴇꜱ", style="primary")
+
+    # IMPORTANT:
+    # Do NOT pass a list as the first argument.
+    # This fixes:
+    # ReplyKeyboardMarkup.__init__()
+    # got multiple values for resize_keyboard
+
+    markup = ReplyKeyboardMarkup(
+        resize_keyboard=True
     )
+
     markup.row(
-        KeyboardButton("🔄 ʀᴇꜱᴛᴀʀᴛ", style="success"),
-        KeyboardButton("⏹ ꜱᴛᴏᴘ", style="danger")
+        KeyboardButton("🌏 Upload"),
+        KeyboardButton("📁 𝐌𝐲 𝐅𝐢𝐥𝐞𝐬")
     )
+
     markup.row(
-        KeyboardButton("⚡ ꜱᴘᴇᴇᴅ", style="primary"),
-        KeyboardButton("🚀 ꜱᴛᴀᴛᴜꜱ", style="primary")
+        KeyboardButton("🔄 𝐑𝐞𝐬𝐭𝐚𝐫𝐭"),
+        KeyboardButton("⏹ 𝐒𝐭𝐨𝐩")
     )
+
     markup.row(
-        KeyboardButton("💳 ʙᴜʏ ᴘʟᴀɴ", style="success"),
-        KeyboardButton("💎 ᴍʏ ᴘʟᴀɴ", style="primary")
+        KeyboardButton("⚡ 𝐒𝐩𝐞𝐞𝐝"),
+        KeyboardButton("🚀 𝐒𝐭𝐚𝐭ᴜѕ")
     )
-    if uid is not None and is_admin(uid):
-        markup.row(KeyboardButton("🛡️ ᴀᴅᴍɪɴ ᴘᴀɴᴇʟ", style="danger"))
+
+    markup.row(
+        KeyboardButton(
+            "⚙️ Recommended Install"
+        )
+    )
+
+    if uid is not None and uid == OWNER_ID:
+        markup.row(
+            KeyboardButton("👑 Owner Panel")
+        )
+
     return markup
 
-def send_welcome_message(message):
+
+# ============================================================
+# .ENV MENUS
+# ============================================================
+
+def env_menu_text(uid, filename, prefix=""):
+
+    env_vars = get_file_env(uid, filename)
+
+    if env_vars:
+
+        lines = "\n".join(
+            f"• <code>{safe_html(k)}</code> = "
+            f"<code>{safe_html(mask_value(k, v))}</code>"
+            for k, v in env_vars.items()
+        )
+
+    else:
+
+        lines = "<i>No variables saved yet.</i>"
+
+    return (
+        f"{prefix}"
+        f"{pe(PE_SETTINGS, '⚙️')} "
+        f"<b>.ENV CONFIGURATION</b>\n"
+        f"<code>{safe_html(filename)}</code>\n\n"
+
+        f"{pe(PE_LOCK, '🔐')} "
+        f"<b>Saved Variables:</b>\n"
+        f"{lines}\n\n"
+
+        f"{pe(PE_STAR, '⚡')} "
+        f"Choose an option below, then press "
+        f"<b>Save &amp; Run Bot</b>."
+    )
+
+
+def env_menu_markup(filename):
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🤖 Set BOT_TOKEN",
+                callback_data=f"setenv_BOT_TOKEN_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "👑 Set ADMIN_ID / OWNER_ID",
+                callback_data=f"setenv_ADMIN_ID_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔑 Set API_ID & API_HASH",
+                callback_data=f"setenv_API_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "➕ Add Custom Variable (KEY=VALUE)",
+                callback_data=f"setenv_CUSTOM_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑 Clear .env Variables",
+                callback_data=f"clearenv_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🚀 Save & Run Bot",
+                callback_data=f"skiprun_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data=f"file_{filename}"
+            )
+        ]
+    ])
+
+
+def env_prompt_markup(filename):
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data=f"cancelenv_{filename}"
+            )
+        ]
+    ])
+
+
+def send_env_menu(chat_id, uid, filename, prefix="", message_id=None):
+
+    text = env_menu_text(uid, filename, prefix)
+    markup = env_menu_markup(filename)
+
+    if message_id:
+
+        try:
+
+            bot.edit_message_text(
+                text,
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+
+            return
+
+        except Exception:
+            pass
+
+    bot.send_message(
+        chat_id,
+        text,
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+
+
+def env_ask_markup_text(mode, filename):
+
+    if mode == "BOT_TOKEN":
+
+        return (
+            f"{pe(PE_BOT, '🤖')} "
+            f"<b>SET BOT_TOKEN</b>\n"
+            f"<code>{safe_html(filename)}</code>\n\n"
+            f"Send your bot token now "
+            f"(from @BotFather)."
+        )
+
+    if mode == "ADMIN_ID":
+
+        return (
+            f"{pe(PE_ADMIN, '👑')} "
+            f"<b>SET ADMIN_ID / OWNER_ID</b>\n"
+            f"<code>{safe_html(filename)}</code>\n\n"
+            f"Send your numeric Telegram user ID.\n"
+            f"It will be saved as both "
+            f"<code>ADMIN_ID</code> and <code>OWNER_ID</code>."
+        )
+
+    if mode == "API":
+
+        return (
+            f"{pe(PE_LOCK, '🔑')} "
+            f"<b>SET API_ID &amp; API_HASH</b>\n"
+            f"<code>{safe_html(filename)}</code>\n\n"
+            f"Send <b>API_ID</b> first (numbers only),\n"
+            f"or send both at once:\n"
+            f"<pre>API_ID=123456\nAPI_HASH=abcdef...</pre>"
+        )
+
+    return (
+        f"{pe(PE_SETTINGS, '➕')} "
+        f"<b>ADD CUSTOM VARIABLES</b>\n"
+        f"<code>{safe_html(filename)}</code>\n\n"
+        f"Send one or more lines in "
+        f"<code>KEY=VALUE</code> format:\n"
+        f"<pre>MONGO_URL=mongodb://...\nLOG_CHANNEL=-100123</pre>"
+    )
+
+
+def handle_env_input(message, state):
+    """Process a text reply for a pending setenv_* request."""
+
     uid = message.from_user.id
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+
+    mode = state["mode"]
+    filename = state["filename"]
+
+    # Remove the user's message (may contain secrets)
+    try:
+        bot.delete_message(chat_id, message.message_id)
+    except Exception:
+        pass
+
+    def fail(reason):
+
+        bot.send_message(
+            chat_id,
+            (
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>{safe_html(reason)}</b>\n\n"
+                f"Please try again or press Cancel."
+            ),
+            reply_markup=env_prompt_markup(filename),
+            parse_mode="HTML"
+        )
+
+    if mode == "BOT_TOKEN":
+
+        if not re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", text):
+            return fail("Invalid BOT_TOKEN format")
+
+        new_vars = {"BOT_TOKEN": text}
+
+    elif mode == "ADMIN_ID":
+
+        if not re.match(r"^-?\d+$", text):
+            return fail("ID must be numeric")
+
+        new_vars = {"ADMIN_ID": text, "OWNER_ID": text}
+
+    elif mode == "API":
+
+        step = state.get("step", "API_ID")
+
+        if "=" in text:
+
+            parsed = parse_env_text(text)
+
+            new_vars = {
+                k: v for k, v in parsed.items()
+                if k in ("API_ID", "API_HASH")
+            }
+
+            if not new_vars:
+                return fail("Send API_ID=... and/or API_HASH=...")
+
+        elif step == "API_ID":
+
+            if not re.match(r"^\d+$", text):
+                return fail("API_ID must be numeric")
+
+            state["api_id"] = text
+            state["step"] = "API_HASH"
+
+            bot.send_message(
+                chat_id,
+                (
+                    f"{pe(PE_CHECK, '✅')} "
+                    f"<b>API_ID received.</b>\n\n"
+                    f"Now send your <b>API_HASH</b>."
+                ),
+                reply_markup=env_prompt_markup(filename),
+                parse_mode="HTML"
+            )
+
+            return
+
+        else:
+
+            if not re.match(r"^[A-Za-z0-9]{16,64}$", text):
+                return fail("Invalid API_HASH format")
+
+            new_vars = {
+                "API_ID": state.get("api_id", ""),
+                "API_HASH": text
+            }
+
+    else:
+
+        new_vars = parse_env_text(text)
+
+        if not new_vars:
+            return fail("No valid KEY=VALUE lines found")
+
+    env_waiting_users.pop(uid, None)
+
+    set_env_vars(uid, filename, new_vars)
+
+    saved_keys = ", ".join(new_vars.keys())
+
+    send_env_menu(
+        chat_id,
+        uid,
+        filename,
+        prefix=(
+            f"{pe(PE_CHECK, '✅')} "
+            f"<b>Saved:</b> "
+            f"<code>{safe_html(saved_keys)}</code>\n\n"
+        )
+    )
+
+
+# ============================================================
+# EXTRA STATE
+# ============================================================
+
+owner_waiting = {}
+owner_run_cache = []
+req_select_store = {}
+
+MENU_PREFIXES = (
+    "🌏", "📁", "🔄", "⏹", "⚡", "🚀", "⚙", "👑"
+)
+
+
+def is_menu_button(text):
+    return any(text.startswith(p) for p in MENU_PREFIXES)
+
+
+def edit_call(call, text, markup=None):
+
+    try:
+
+        bot.edit_message_text(
+            text,
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            reply_markup=markup,
+            parse_mode="HTML"
+        )
+
+    except Exception:
+        pass
+
+
+def get_file_limit(uid):
+    """None = unlimited, otherwise the max number of files."""
+
+    if uid == OWNER_ID:
+        return None
+
     ensure_user(uid)
+
+    lim = users[uid].get("max_files", users[uid].get("file_limit", 2))
+
+    try:
+        lim = int(lim)
+    except Exception:
+        lim = 2
+
+    if lim < 0:
+        return None
+
+    return lim
+
+
+def limit_label(uid):
+
+    if uid == OWNER_ID:
+        return "Unlimited"
+
+    lim = get_file_limit(uid)
+
+    return "Unlimited" if lim is None else str(lim)
+
+
+# ============================================================
+# MANUAL PACKAGE INSTALLER
+# ============================================================
+
+PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\[\],=<>!~@:/+]*$")
+
+
+def pip_cmd(spec):
+
+    return [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        spec
+    ]
+
+
+def install_in_thread(chat_id, items):
+    """items = [(cmd_list, description), ...] installed one by one."""
+
+    def worker():
+
+        for cmd, desc in items:
+
+            try:
+
+                m = bot.send_message(
+                    chat_id,
+                    (
+                        f"{pe(PE_UPLOAD, '📥')} "
+                        f"<b>Preparing {safe_html(desc)}...</b>"
+                    ),
+                    parse_mode="HTML"
+                )
+
+                live_install(
+                    cmd,
+                    chat_id,
+                    m.message_id,
+                    desc
+                )
+
+            except Exception as e:
+
+                print(f"Install error: {e}")
+
+    threading.Thread(
+        target=worker,
+        daemon=True
+    ).start()
+
+
+def pkg_menu_text(prefix=""):
+
+    return (
+        f"{prefix}"
+        f"{pe(PE_SETTINGS, '⚙️')} "
+        f"<b>PACKAGE INSTALLER</b>\n\n"
+
+        f"{pe(PE_SERVER, '📦')} "
+        f"Nothing is installed automatically.\n"
+        f"Choose how you want to install:\n\n"
+
+        f"• {pe(PE_STAR, '✍️')} "
+        f"<b>Manual</b> - type package name(s)\n"
+
+        f"• {pe(PE_DIAMOND, '📋')} "
+        f"<b>Recommended</b> - install one package "
+        f"from the list"
+    )
+
+
+def pkg_menu_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✍️ Manual Package Install (Type Name)",
+                callback_data="manual_pkg_input"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📋 Choose from Recommended List",
+                callback_data="rec_pkg_list"
+            )
+        ]
+    ])
+
+
+def pkg_cancel_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data="pkg_cancel"
+            )
+        ]
+    ])
+
+
+def rec_list_markup():
+
+    rows = []
+    row = []
+
+    for p in RECOMMENDED_PACKAGES:
+
+        row.append(
+            InlineKeyboardButton(
+                f"📦 {p}",
+                callback_data=f"recpkg_{p}"
+            )
+        )
+
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+
+    if row:
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(
+            "📦 pytgcalls (GitHub)",
+            callback_data="recpkg_pytgcalls"
+        )
+    ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "⬅ Back",
+            callback_data="pkg_menu"
+        )
+    ])
+
+    return InlineKeyboardMarkup(rows)
+
+
+def handle_manual_install_input(message):
+
+    uid = message.from_user.id
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+
+    names = text.split()
+
+    valid = bool(names) and all(
+        PKG_NAME_RE.match(n) and len(n) <= 120
+        for n in names
+    )
+
+    if not valid:
+
+        bot.send_message(
+            chat_id,
+            (
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>Invalid package name.</b>\n\n"
+                f"Send names like "
+                f"<code>pyrogram</code> or "
+                f"<code>requests aiohttp</code>."
+            ),
+            reply_markup=pkg_cancel_markup(),
+            parse_mode="HTML"
+        )
+
+        return
+
+    install_waiting_users.pop(uid, None)
+
+    install_in_thread(
+        chat_id,
+        [(pip_cmd(n), n) for n in names[:10]]
+    )
+
+
+# ============================================================
+# REQUIREMENTS.TXT HELPERS
+# ============================================================
+
+def find_requirements(folder):
+    """Relative path of a requirements.txt inside folder, or None."""
+
+    if os.path.isfile(os.path.join(folder, "requirements.txt")):
+        return "requirements.txt"
+
+    for root, dirs, files in os.walk(folder):
+
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and d not in ("venv", "env", "__pycache__", "node_modules")
+        ]
+
+        for f in files:
+
+            if f.lower() == "requirements.txt":
+
+                return os.path.relpath(
+                    os.path.join(root, f),
+                    folder
+                ).replace(os.sep, "/")
+
+    return None
+
+
+def safe_user_path(uid, rel):
+
+    base = os.path.abspath(user_folder(uid))
+
+    target = os.path.abspath(os.path.join(base, rel))
+
+    if target == base or not target.startswith(base + os.sep):
+        return None
+
+    return target
+
+
+def parse_requirements_file(path):
+
+    pkgs = []
+
+    try:
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            for raw in f:
+
+                line = raw.split(" #")[0].strip()
+
+                if (
+                    not line
+                    or line.startswith("#")
+                    or line.startswith("-")
+                ):
+                    continue
+
+                if line not in pkgs:
+                    pkgs.append(line)
+
+    except Exception as e:
+
+        print(f"Requirements parse error: {e}")
+
+    return pkgs[:80]
+
+
+def req_buttons(rel):
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📦 Install requirements.txt",
+                callback_data=f"reqinstall_{rel}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "☑️ Select Packages from File",
+                callback_data=f"reqselect_{rel}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏭ Skip Installation",
+                callback_data="myfiles"
+            )
+        ]
+    ])
+
+
+def req_prompt_text(rel):
+
+    return (
+        f"{pe(PE_CHECK, '✅')} "
+        f"<b>File saved:</b> "
+        f"<code>{safe_html(rel)}</code>\n\n"
+
+        f"{pe(PE_SERVER, '📦')} "
+        f"<b>Install the dependencies?</b>\n\n"
+
+        f"{pe(PE_LOCK, '🔐')} "
+        f"Nothing is installed automatically. "
+        f"Choose an option below."
+    )
+
+
+def req_note(folder):
+
+    if find_requirements(folder):
+
+        return (
+            f"{pe(PE_SERVER, '📦')} "
+            f"<b>requirements.txt</b> found - "
+            f"it is NOT installed automatically. "
+            f"Choose below.\n\n"
+        )
+
+    return ""
+
+
+def scan_py_files(folder, limit=300):
+    """Find every .py file in the user's folder, including subfolders."""
+
+    skip = {
+        "venv", "env", ".venv", "__pycache__",
+        "node_modules", "site-packages", ".git"
+    }
+
+    found = []
+
+    for root, dirs, files in os.walk(folder):
+
+        dirs[:] = [
+            d for d in dirs
+            if d not in skip and not d.startswith(".")
+        ]
+
+        for f in sorted(files):
+
+            if f.lower().endswith(".py"):
+
+                found.append(
+                    os.path.relpath(
+                        os.path.join(root, f),
+                        folder
+                    ).replace(os.sep, "/")
+                )
+
+                if len(found) >= limit:
+                    return found
+
+    return found
+
+
+def zip_markup(folder, main_file):
+
+    rows = []
+
+    rel = find_requirements(folder)
+
+    if rel:
+        rows += req_buttons(rel).keyboard
+
+    rows += env_choice_markup(main_file).keyboard
+
+    return InlineKeyboardMarkup(rows)
+
+
+# ============================================================
+# OWNER PANEL
+# ============================================================
+
+def user_status_icon(u_id):
+
+    u = users.get(u_id, {})
+
+    if u_id == OWNER_ID:
+        return "👑"
+
+    if u.get("approved"):
+        return "✅"
+
+    if u.get("rejected"):
+        return "🚫"
+
+    return "⏳"
+
+
+def owner_text():
+
+    total_users = len(users)
+
+    approved_users = sum(
+        1 for u in users.values()
+        if u.get("approved", False)
+    )
+
+    pending_users = sum(
+        1 for u in users.values()
+        if not u.get("approved", False)
+        and not u.get("rejected", False)
+    )
+
+    banned_users = sum(
+        1 for u in users.values()
+        if u.get("rejected", False)
+        and not u.get("approved", False)
+    )
+
+    total_files = sum(
+        len(u.get("files", []))
+        for u in users.values()
+    )
+
+    running = sum(
+        len(v) for v in active_scripts.values()
+    )
+
+    return (
+        f"{pe(PE_ADMIN, '👑')} "
+        f"<b>OWNER PANEL</b>\n\n"
+
+        f"{pe(PE_USER, '👥')} "
+        f"<b>Total Users:</b> {total_users}\n"
+
+        f"{pe(PE_CHECK, '✅')} "
+        f"<b>Approved:</b> {approved_users}\n"
+
+        f"{pe(PE_WARNING, '⏳')} "
+        f"<b>Pending:</b> {pending_users}\n"
+
+        f"{pe(PE_CROSS, '🚫')} "
+        f"<b>Banned:</b> {banned_users}\n"
+
+        f"{pe(PE_FOLDER, '📁')} "
+        f"<b>Total Files:</b> {total_files}\n"
+
+        f"{pe(PE_SERVER, '🟢')} "
+        f"<b>Running Scripts:</b> {running}\n"
+
+        f"⏱️ <b>Uptime:</b> {uptime()}"
+    )
+
+
+def owner_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "👥 Manage Users",
+                callback_data="owner_users"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟢 All Running Scripts",
+                callback_data="owner_running"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📢 Broadcast Message",
+                callback_data="owner_broadcast"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🖥 Server & Storage Cleanup",
+                callback_data="owner_cleanup"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data="owner_home"
+            )
+        ]
+    ])
+
+
+def owner_back_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data="owner_home"
+            )
+        ]
+    ])
+
+
+def send_owner_panel(chat_id):
+
+    bot.send_message(
+        chat_id,
+        owner_text(),
+        reply_markup=owner_markup(),
+        parse_mode="HTML"
+    )
+
+
+def owner_users_view():
+
+    approved = sum(
+        1 for u in users.values()
+        if u.get("approved", False)
+    )
+
+    pending = sum(
+        1 for u in users.values()
+        if not u.get("approved", False)
+        and not u.get("rejected", False)
+    )
+
+    text = (
+        f"{pe(PE_USER, '👥')} "
+        f"<b>MANAGE USERS</b>\n\n"
+        f"{pe(PE_CHECK, '✅')} "
+        f"<b>Approved:</b> {approved}\n"
+        f"{pe(PE_WARNING, '⏳')} "
+        f"<b>Pending:</b> {pending}\n\n"
+        f"✅ approved  ⏳ pending  🚫 banned  👑 owner\n"
+        f"Tap a user to manage."
+    )
+
+    # Pending users first
+    ordered = sorted(
+        users.items(),
+        key=lambda kv: (
+            0 if (
+                not kv[1].get("approved", False)
+                and not kv[1].get("rejected", False)
+            ) else 1
+        )
+    )
+
+    rows = []
+
+    for u_id, u in ordered[:90]:
+
+        name = str(u.get("name") or "")[:18]
+
+        label = (
+            f"{user_status_icon(u_id)} {u_id} "
+            f"• 📁{len(u.get('files', []))}"
+        )
+
+        if name:
+            label += f" • {name}"
+
+        rows.append([
+            InlineKeyboardButton(
+                label,
+                callback_data=f"owner_user_{u_id}"
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "⬅ Back",
+            callback_data="owner_home"
+        )
+    ])
+
+    return text, InlineKeyboardMarkup(rows)
+
+
+def owner_user_view(target):
+
+    u = users.get(target)
+
+    if u is None:
+        return None, None
+
+    icon = user_status_icon(target)
+
+    status = {
+        "👑": "Owner",
+        "✅": "Approved",
+        "🚫": "Banned",
+        "⏳": "Pending"
+    }.get(icon, "Unknown")
+
+    running = len(active_scripts.get(target, {}))
+
+    text = (
+        f"{pe(PE_USER, '👤')} "
+        f"<b>USER DETAILS</b>\n\n"
+
+        f"{pe(PE_PHONE, '🆔')} "
+        f"<b>ID:</b> <code>{target}</code>\n"
+
+        f"{pe(PE_BOT, '📛')} "
+        f"<b>Name:</b> "
+        f"{safe_html(u.get('name') or 'Unknown')}\n"
+
+        f"{pe(PE_SHIELD, '📌')} "
+        f"<b>Status:</b> {icon} {status}\n"
+
+        f"{pe(PE_FOLDER, '📁')} "
+        f"<b>Files:</b> {len(u.get('files', []))}\n"
+
+        f"{pe(PE_SERVER, '🟢')} "
+        f"<b>Running:</b> {running}\n"
+
+        f"{pe(PE_GIFT, '📦')} "
+        f"<b>File Limit:</b> {limit_label(target)}"
+    )
+
+    rows = []
+
+    if target != OWNER_ID:
+
+        if u.get("approved"):
+
+            rows.append([
+                InlineKeyboardButton(
+                    "❌ Ban (Unapprove)",
+                    callback_data=f"owner_ban_{target}"
+                )
+            ])
+
+        else:
+
+            rows.append([
+                InlineKeyboardButton(
+                    "✅ Approve",
+                    callback_data=f"owner_appr_{target}"
+                )
+            ])
+
+        rows.append([
+            InlineKeyboardButton(
+                "📈 Change File Limit",
+                callback_data=f"owner_setlim_{target}"
+            )
+        ])
+
+        rows.append([
+            InlineKeyboardButton(
+                "➖ Limit",
+                callback_data=f"owner_lim_{target}_dec"
+            ),
+            InlineKeyboardButton(
+                "➕ Limit",
+                callback_data=f"owner_lim_{target}_inc"
+            )
+        ])
+
+        rows.append([
+            InlineKeyboardButton(
+                "♾ Unlimited",
+                callback_data=f"owner_lim_{target}_unl"
+            ),
+            InlineKeyboardButton(
+                "🔁 Reset (2)",
+                callback_data=f"owner_lim_{target}_reset"
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "📁 View User Files",
+            callback_data=f"owner_files_{target}"
+        )
+    ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "⬅ Back",
+            callback_data="owner_users"
+        )
+    ])
+
+    return text, InlineKeyboardMarkup(rows)
+
+
+def owner_files_view(target):
+
+    files = users.get(target, {}).get("files", [])
+
+    folder = user_folder(target)
+
+    lines = []
+
+    for f in files[:60]:
+
+        p = os.path.join(folder, f)
+
+        run = p in active_scripts.get(target, {})
+
+        lines.append(
+            f"{'🟢' if run else '⚪'} "
+            f"<code>{safe_html(f)}</code>"
+        )
+
+    body = "\n".join(lines) or "No files."
+
+    text = (
+        f"{pe(PE_FOLDER, '📂')} "
+        f"<b>FILES OF</b> <code>{target}</code>\n\n"
+        f"{body}\n\n"
+        f"🟢 running  ⚪ stopped"
+    )
+
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data=f"owner_user_{target}"
+            )
+        ]
+    ])
+
+    return text, markup
+
+
+def owner_running_view():
+
+    owner_run_cache.clear()
+
+    for u_id, procs in list(active_scripts.items()):
+
+        for p in list(procs.keys()):
+
+            owner_run_cache.append((u_id, p))
+
+    lines = []
+    rows = []
+
+    for i, (u_id, p) in enumerate(owner_run_cache[:40]):
+
+        base = os.path.basename(p)
+
+        lines.append(
+            f"🟢 <code>{u_id}</code> - "
+            f"<code>{safe_html(base)}</code>"
+        )
+
+        rows.append([
+            InlineKeyboardButton(
+                f"⏹ Force Stop • {u_id} • {base[:20]}",
+                callback_data=f"owner_fstop_{i}"
+            )
+        ])
+
+    body = "\n".join(lines) or "No scripts running."
+
+    if owner_run_cache:
+
+        rows.append([
+            InlineKeyboardButton(
+                "⏹ Stop All Scripts",
+                callback_data="owner_stopall"
+            )
+        ])
+
+    rows.append([
+        InlineKeyboardButton(
+            "🔄 Refresh",
+            callback_data="owner_running"
+        ),
+        InlineKeyboardButton(
+            "⬅ Back",
+            callback_data="owner_home"
+        )
+    ])
+
+    text = (
+        f"{pe(PE_SERVER, '🟢')} "
+        f"<b>ALL RUNNING SCRIPTS</b> "
+        f"({len(owner_run_cache)})\n\n{body}"
+    )
+
+    return text, InlineKeyboardMarkup(rows)
+
+
+def dir_size(path):
+
+    total = 0
+
+    for root, _, files in os.walk(path):
+
+        for f in files:
+
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except Exception:
+                pass
+
+    return total
+
+
+def owner_cleanup_view(prefix=""):
+
+    cpu = psutil.cpu_percent(interval=0.3)
+
+    ram = psutil.virtual_memory()
+
+    try:
+
+        disk = psutil.disk_usage(os.path.abspath(STORAGE_DIR))
+
+        disk_line = (
+            f"{round(disk.used / 1024 ** 3, 2)} / "
+            f"{round(disk.total / 1024 ** 3, 2)} GB "
+            f"({disk.percent}%)"
+        )
+
+    except Exception:
+
+        disk_line = "N/A"
+
+    storage_mb = round(
+        dir_size(UPLOAD_DIR) / 1024 ** 2,
+        2
+    )
+
+    log_files = sum(len(v) for v in logs_store.values())
+
+    log_lines = sum(
+        len(lines)
+        for d in logs_store.values()
+        for lines in d.values()
+    )
+
+    dead = sum(
+        1
+        for procs in active_scripts.values()
+        for proc in procs.values()
+        if proc.poll() is not None
+    )
+
+    running = sum(
+        len(v) for v in active_scripts.values()
+    )
+
+    text = (
+        f"{prefix}"
+        f"{pe(PE_SERVER, '🖥')} "
+        f"<b>SERVER &amp; STORAGE</b>\n\n"
+
+        f"{pe(PE_FIRE, '⚙️')} "
+        f"<b>CPU:</b> {cpu}%\n"
+
+        f"{pe(PE_DIAMOND, '💾')} "
+        f"<b>RAM:</b> "
+        f"{round(ram.used / 1024 ** 3, 2)} / "
+        f"{round(ram.total / 1024 ** 3, 2)} GB "
+        f"({ram.percent}%)\n"
+
+        f"{pe(PE_SHIELD, '💽')} "
+        f"<b>Disk:</b> {disk_line}\n"
+
+        f"{pe(PE_FOLDER, '📁')} "
+        f"<b>User Files:</b> {storage_mb} MB\n\n"
+
+        f"{pe(PE_CHECK, '🟢')} "
+        f"<b>Running Scripts:</b> {running}\n"
+
+        f"{pe(PE_WARNING, '💀')} "
+        f"<b>Dead Processes:</b> {dead}\n"
+
+        f"{pe(PE_SETTINGS, '🔧')} "
+        f"<b>Active Processes:</b> "
+        f"{len(psutil.Process(os.getpid()).children(recursive=True))}\n"
+
+        f"{pe(PE_UPLOAD, '📜')} "
+        f"<b>Logs:</b> {log_files} files, "
+        f"{log_lines} lines"
+    )
+
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🧽 Clear Stale Logs",
+                callback_data="owner_clr_stale"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🧹 Clear All Logs",
+                callback_data="owner_clr_all"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Kill Dead/Zombie Processes",
+                callback_data="owner_clr_dead"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🧼 Remove __pycache__",
+                callback_data="owner_clr_cache"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data="owner_cleanup"
+            ),
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data="owner_home"
+            )
+        ]
+    ])
+
+    return text, markup
+
+
+@locked
+def do_cleanup(kind):
+
+    if kind == "stale":
+
+        removed = 0
+
+        for u_id in list(logs_store.keys()):
+
+            for p in list(logs_store[u_id].keys()):
+
+                if p not in active_scripts.get(u_id, {}):
+
+                    logs_store[u_id].pop(p, None)
+                    removed += 1
+
+        return (
+            f"{pe(PE_CHECK, '🧹')} "
+            f"<b>Stale logs removed:</b> {removed}\n\n"
+        )
+
+    if kind == "all":
+
+        count = sum(len(v) for v in logs_store.values())
+
+        logs_store.clear()
+
+        return (
+            f"{pe(PE_CHECK, '🧹')} "
+            f"<b>All logs cleared:</b> {count}\n\n"
+        )
+
+    if kind == "dead":
+
+        removed = 0
+
+        for u_id in list(active_scripts.keys()):
+
+            for p, proc in list(active_scripts[u_id].items()):
+
+                if proc.poll() is not None:
+
+                    kill_process_tree(proc)
+
+                    active_scripts[u_id].pop(p, None)
+
+                    removed += 1
+
+        reaped = 0
+
+        try:
+
+            me = psutil.Process(os.getpid())
+
+            for child in me.children(recursive=True):
+
+                try:
+
+                    if child.status() == psutil.STATUS_ZOMBIE:
+
+                        try:
+                            os.waitpid(child.pid, os.WNOHANG)
+                        except Exception:
+                            pass
+
+                        reaped += 1
+
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+        return (
+            f"{pe(PE_CHECK, '🔄')} "
+            f"<b>Dead processes removed:</b> {removed}\n"
+            f"{pe(PE_CHECK, '🧟')} "
+            f"<b>Zombies reaped:</b> {reaped}\n\n"
+        )
+
+    if kind == "cache":
+
+        removed = 0
+
+        for root, dirs, _ in os.walk(UPLOAD_DIR):
+
+            for d in list(dirs):
+
+                if d == "__pycache__":
+
+                    shutil.rmtree(
+                        os.path.join(root, d),
+                        ignore_errors=True
+                    )
+
+                    dirs.remove(d)
+                    removed += 1
+
+        return (
+            f"{pe(PE_CHECK, '🧼')} "
+            f"<b>__pycache__ folders removed:</b> {removed}\n\n"
+        )
+
+    return ""
+
+
+def run_broadcast(owner_chat, text):
+
+    sent = 0
+    failed = 0
+
+    body = (
+        f"{pe(PE_ADMIN, '📢')} "
+        f"<b>ANNOUNCEMENT</b>\n\n"
+        f"{safe_html(text)}"
+    )
+
+    for target in list(users.keys()):
+
+        try:
+
+            bot.send_message(
+                target,
+                body,
+                parse_mode="HTML"
+            )
+
+            sent += 1
+
+        except Exception:
+
+            failed += 1
+
+        time.sleep(0.05)
+
+    try:
+
+        bot.send_message(
+            owner_chat,
+            (
+                f"{pe(PE_CHECK, '✅')} "
+                f"<b>BROADCAST FINISHED</b>\n\n"
+                f"{pe(PE_USER, '📨')} "
+                f"<b>Sent:</b> {sent}\n"
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>Failed:</b> {failed}"
+            ),
+            parse_mode="HTML"
+        )
+
+    except Exception:
+        pass
+
+
+def handle_owner_input(message, state):
+
+    uid = message.from_user.id
+    chat_id = message.chat.id
+    text = (message.text or "").strip()
+
+    if state.get("mode") == "setlimit":
+
+        target = state.get("target")
+
+        low = text.lower()
+
+        if low in ("unlimited", "inf", "-1"):
+
+            new_limit = -1
+
+        elif text.isdigit():
+
+            new_limit = min(int(text), 100000)
+
+        else:
+
+            bot.send_message(
+                chat_id,
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>Send a number</b> (for example "
+                    f"<code>5</code>) or <code>unlimited</code>."
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancel",
+                            callback_data=f"owner_user_{target}"
+                        )
+                    ]
+                ]),
+                parse_mode="HTML"
+            )
+
+            return
+
+        if target not in users or target == OWNER_ID:
+
+            owner_waiting.pop(uid, None)
+
+            return
+
+        owner_waiting.pop(uid, None)
+
+        users[target]["max_files"] = new_limit
+
+        save_data()
+
+        t, m = owner_user_view(target)
+
+        bot.send_message(
+            chat_id,
+            (
+                f"{pe(PE_CHECK, '✅')} "
+                f"<b>File limit updated:</b> "
+                f"{limit_label(target)}\n\n"
+                f"{t}"
+            ),
+            reply_markup=m,
+            parse_mode="HTML"
+        )
+
+        return
+
+    if state.get("mode") not in ("broadcast", "bc_confirm") or not text:
+        return
+
+    text = text[:3500]
+
+    owner_waiting[uid] = {
+        "mode": "bc_confirm",
+        "text": text
+    }
+
+    bot.send_message(
+        chat_id,
+        (
+            f"{pe(PE_ADMIN, '📢')} "
+            f"<b>BROADCAST PREVIEW</b>\n\n"
+            f"{safe_html(text)}\n\n"
+            f"{pe(PE_WARNING, '⚠️')} "
+            f"Send to <b>{len(users)}</b> users?"
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Send Now",
+                    callback_data="owner_bcsend"
+                ),
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data="owner_cancel"
+                )
+            ]
+        ]),
+        parse_mode="HTML"
+    )
+
+
+# ============================================================
+# START COMMAND
+# ============================================================
+
+# ============================================================
+# ADMIN PANEL (OWNER ONLY)
+# ============================================================
+
+def admin_text():
+
+    total_users = len(users)
+
+    approved_users = sum(
+        1 for u in users.values()
+        if u.get("approved", False)
+    )
+
+    pending_users = sum(
+        1 for u in users.values()
+        if not u.get("approved", False)
+        and not u.get("rejected", False)
+    )
+
+    total_files = sum(
+        len(u.get("files", []))
+        for u in users.values()
+    )
+
+    running = sum(
+        len(active_scripts.get(user_id, {}))
+        for user_id in users
+    )
+
+    return (
+        f"{pe(PE_ADMIN, '👑')} "
+        f"<b>ADMIN PANEL</b>\n\n"
+
+        f"{pe(PE_USER, '👥')} "
+        f"<b>Total Users:</b> {total_users}\n"
+
+        f"{pe(PE_CHECK, '✅')} "
+        f"<b>Approved:</b> {approved_users}\n"
+
+        f"{pe(PE_WARNING, '⏳')} "
+        f"<b>Pending:</b> {pending_users}\n"
+
+        f"{pe(PE_FOLDER, '📁')} "
+        f"<b>Total Files:</b> {total_files}\n"
+
+        f"{pe(PE_SERVER, '🟢')} "
+        f"<b>Running Scripts:</b> {running}\n"
+
+        f"⏱️ <b>Uptime:</b> {uptime()}"
+    )
+
+
+def admin_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "👥 All Users",
+                callback_data="adm_users"
+            ),
+            InlineKeyboardButton(
+                "⏳ Pending Users",
+                callback_data="adm_pending"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🟢 Running Scripts",
+                callback_data="adm_running"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏹ Stop All Scripts",
+                callback_data="adm_stopall"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data="adm_home"
+            )
+        ]
+    ])
+
+
+def admin_back_markup():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data="adm_home"
+            )
+        ]
+    ])
+
+
+def send_admin_panel(chat_id):
+
+    bot.send_message(
+        chat_id,
+        admin_text(),
+        reply_markup=admin_markup(),
+        parse_mode="HTML"
+    )
+
+
+# ============================================================
+# KEEP-ALIVE HTTP SERVER (needed for Render Web Services)
+# ============================================================
+
+class KeepAliveHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"SHIVA HOSTING IS RUNNING")
+
+    def do_HEAD(self):
+
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+def start_keepalive_server():
+
+    port = int(os.environ.get("PORT", "10000"))
+
+    try:
+
+        server = HTTPServer(
+            ("0.0.0.0", port),
+            KeepAliveHandler
+        )
+
+        threading.Thread(
+            target=server.serve_forever,
+            daemon=True
+        ).start()
+
+        print(f"Keep-alive server on port {port}")
+
+    except Exception as e:
+
+        print(f"Keep-alive server error: {e}")
+
+
+@bot.message_handler(
+    commands=["start"]
+)
+def start_command(message):
+
+    uid = message.from_user.id
+
+    first_name = (
+        message.from_user.first_name
+        or "User"
+    )
+
+    is_new = uid not in users
+
+    ensure_user(uid)
+
+    users[uid]["name"] = first_name
+    save_data()
+
+    env_waiting_users.pop(uid, None)
+
+    # Owner always has access
+    if uid == OWNER_ID:
+
+        users[uid]["approved"] = True
+        users[uid]["rejected"] = False
+
+        save_data()
+
+    # New users need owner approval
+    if is_new and uid != OWNER_ID:
+
+        send_approval_request(message)
+
+        bot.send_message(
+            uid,
+            (
+                f"{pe(PE_LOCK, '🔐')} "
+                f"<b>ACCESS REQUESTED</b>\n\n"
+
+                f"{pe(PE_USER, '👤')} "
+                f"Welcome, "
+                f"<b>{safe_html(first_name)}</b>!\n\n"
+
+                f"{pe(PE_ADMIN, '👑')} "
+                f"Your access request has been "
+                f"sent to the owner.\n\n"
+
+                f"{pe(PE_STAR, '⭐')} "
+                f"<b>Please wait for approval.</b>"
+            ),
+            parse_mode="HTML"
+        )
+
+        return
+
+    if not is_approved(uid):
+
+        bot.send_message(
+            uid,
+            (
+                f"{pe(PE_LOCK, '🔐')} "
+                f"<b>ACCESS PENDING</b>\n\n"
+
+                f"Your account is waiting for "
+                f"<b>Owner Approval</b>.\n\n"
+
+                f"{pe(PE_STAR, '⭐')} "
+                f"Please wait."
+            ),
+            parse_mode="HTML"
+        )
+
+        return
+
     welcome = (
         f"┏━━━━━━━━━━━━━━━━━━━━━━━━┓\n"
-        f"┃ {pe(PE_ROCKET, '🚀')} <b>ꜱʜɪᴠᴀ ʜᴏꜱᴛɪɴɢ</b> ┃\n"
+        f"┃ {pe(PE_ROCKET, '🚀')} "
+        f"<b>SHIVA HOSTING</b> ┃\n"
+        f"┃ <b>VERSION 0.3</b> ┃\n"
         f"┗━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n"
-        f"{pe(PE_GIFT, '🎁')} <b>ᴡᴇʟᴄᴏᴍᴇ</b> {safe_html(message.from_user.first_name or 'User')}!\n\n"
-        f"{pe(PE_PHONE, '🆔')} <b>ᴜꜱᴇʀ ɪᴅ:</b> <code>{uid}</code>\n"
-        f"{pe(PE_FOLDER, '📁')} <b>ꜰɪʟᴇꜱ:</b> {len(users[uid]['files'])}/{get_user_file_limit(uid)}\n\n"
-        f"{pe(PE_CHECK, '✅')} ᴀᴜᴛᴏ-ʀᴇᴄᴏᴠᴇʀʏ ꜱʏꜱᴛᴇᴍ\n"
-        f"{pe(PE_BOT, '🤖')} ᴘʏᴛʜᴏɴ / ᴢɪᴘ ꜱᴜᴘᴘᴏʀᴛ"
+
+        f"{pe(PE_GIFT, '👤')} "
+        f"<b>Wᴇʟᴄᴏᴍᴇ</b> "
+        f"{safe_html(first_name)}!\n\n"
+
+        f"{pe(PE_PHONE, '🆔')} "
+        f"<b>Uꜱᴇʀ ID:</b> "
+        f"<code>{uid}</code>\n\n"
+
+        f"{pe(PE_FOLDER, '📁')} "
+        f"<b>Fɪʟᴇꜱ:</b> "
+        f"{len(users[uid]['files'])}\n\n"
+
+        f"{pe(PE_STAR, '⚡')} "
+        f"<b>Fᴇᴀᴛᴜʀᴇꜱ:</b>\n"
+
+        f"• {pe(PE_CHECK, '✅')} "
+        f"Aᴜᴛᴏ-Rᴇᴄᴏᴠᴇʀʏ Sʏꜱᴛᴇᴍ\n"
+
+        f"• {pe(PE_BOT, '🤖')} "
+        f"Pʏᴛʜᴏɴ / Jꜱ / Zɪᴘ Sᴜᴘᴘᴏʀᴛ\n"
+
+        f"• {pe(PE_DIAMOND, '💎')} "
+        f"Pʀᴇᴍɪᴜᴍ Eᴍᴏᴊɪ Sʏꜱᴛᴇᴍ\n\n"
+
+        f"Uꜱᴇ ᴛʜᴇ Bᴜᴛᴛᴏɴs Bᴇʟᴏᴡ."
     )
-    bot.send_message(uid, welcome, reply_markup=control_buttons(uid), parse_mode="HTML")
+
+    bot.send_message(
+        uid,
+        welcome,
+        reply_markup=control_buttons(uid),
+        parse_mode="HTML"
+    )
+
+    notify_owner(
+        f"<b>User Started Bot</b>\n"
+        f"👤 <code>{uid}</code>\n"
+        f"Name: {safe_html(first_name)}",
+        0
+    )
+
 
 # ============================================================
-# HANDLERS
+# TEXT / CONTROL BUTTON HANDLER
 # ============================================================
-@bot.message_handler(commands=["start"])
-def start_command(message):
-    uid = message.from_user.id
-    ensure_user(uid)
-    if uid == OWNER_ID:
-        users[uid].update({"approved": True, "rejected": False, "password_verified": True, "banned": False})
-        save_data()
-        send_welcome_message(message)
-        return
-    if not users[uid].get("password_verified", False):
-        msg = bot.reply_to(message, f"{pe(PE_LOCK, '🔐')} <b>ꜱᴇɴᴅ ᴛʜᴇ ʙᴏᴛ ᴘᴀꜱꜱᴡᴏʀᴅ ᴛᴏ ᴄᴏɴᴛɪɴᴜᴇ.</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, verify_password)
-        return
-    send_welcome_message(message)
-
-@bot.message_handler(commands=["setqr"])
-def set_qr_command(message):
-    if message.from_user.id != OWNER_ID: return
-    msg = bot.reply_to(message, f"{pe(PE_UPLOAD, '📸')} <b>ꜱᴇɴᴅ ᴛʜᴇ ǫʀ ɪᴍᴀɢᴇ ɴᴏᴡ (ᴀꜱ ᴀ ᴘʜᴏᴛᴏ):</b>", parse_mode="HTML")
-    bot.register_next_step_handler(msg, process_custom_qr)
-
-def process_custom_qr(message):
-    if not message.photo and not message.document:
-        return bot.reply_to(message, "❌ ꜱᴇɴᴅ ᴀ ᴘʜᴏᴛᴏ.")
-    try:
-        if message.photo:
-            file_info = bot.get_file(message.photo[-1].file_id)
-        else:
-            file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        with open(CUSTOM_QR_FILE, "wb") as new_file:
-            new_file.write(downloaded_file)
-        bot.reply_to(message, f"{pe(PE_CHECK, '✅')} <b>ᴄᴜꜱᴛᴏᴍ ǫʀ ꜱᴀᴠᴇᴅ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ! ɴᴏᴡ ɪᴛ ᴡɪʟʟ ꜱʜᴏᴡ ɪɴ ǫʀ 2.</b>", parse_mode="HTML")
-    except Exception as e:
-        bot.reply_to(message, f"❌ ᴇʀʀᴏʀ: {e}")
 
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def control_handler(message):
+
     uid = message.from_user.id
     text = (message.text or "").strip()
-    ensure_user(uid)
-    if approval_required(message): return
 
-    if text.startswith("🌏"):
-        bot.reply_to(message, f"{pe(PE_UPLOAD, '📤')} <b>ꜱᴇɴᴅ ʏᴏᴜʀ .ᴘʏ, .ᴢɪᴘ ᴏʀ .ᴛxᴛ ꜰɪʟᴇ ᴀꜱ ᴀ ᴅᴏᴄᴜᴍᴇɴᴛ.</b>", parse_mode="HTML")
-    
-    elif text.startswith("🛡️"):
-        if not is_admin(uid): return
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.row(InlineKeyboardButton("🔐 ᴄʜᴀɴɢᴇ ᴘᴀꜱꜱᴡᴏʀᴅ", callback_data="admin_changepass"), InlineKeyboardButton("🚫 ʙᴀɴ ᴜꜱᴇʀ", callback_data="admin_ban"))
-        markup.row(InlineKeyboardButton("✅ ᴜɴʙᴀɴ ᴜꜱᴇʀ", callback_data="admin_unban"), InlineKeyboardButton("👑 ᴀᴅᴅ ᴀᴅᴍɪɴ", callback_data="admin_addadmin"))
-        markup.row(InlineKeyboardButton("🗑 ʀᴇᴍᴏᴠᴇ ᴀᴅᴍɪɴ", callback_data="admin_removeadmin"), InlineKeyboardButton("📋 ᴀᴅᴍɪɴ ʟɪꜱᴛ", callback_data="admin_list"))
-        bot.reply_to(message, f"{pe(PE_ADMIN, '🛡️')} <b>ᴀᴅᴍɪɴ ᴄᴏɴᴛʀᴏʟ ᴘᴀɴᴇʟ</b>", reply_markup=markup, parse_mode="HTML")
+    ensure_user(uid)
+
+    if approval_required(message):
+        return
+
+    user_data = users[uid]
+
+    # --------------------------------------------------------
+    # PENDING .ENV INPUT
+    # --------------------------------------------------------
+
+    if is_menu_button(text):
+
+        install_waiting_users.pop(uid, None)
+        owner_waiting.pop(uid, None)
+        env_waiting_users.pop(uid, None)
+
+    if uid in install_waiting_users:
+
+        handle_manual_install_input(message)
+
+        return
+
+    if uid in owner_waiting and is_owner(uid):
+
+        handle_owner_input(
+            message,
+            owner_waiting[uid]
+        )
+
+        return
+
+    if uid in env_waiting_users:
+
+        handle_env_input(
+            message,
+            env_waiting_users[uid]
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # UPLOAD
+    # --------------------------------------------------------
+
+    if text.startswith("👑") and is_owner(uid):
+
+        send_owner_panel(message.chat.id)
+
+    elif text.startswith("🌏"):
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_UPLOAD, '⬆️')} "
+                f"<b>UPLOAD YOUR FILE</b>\n\n"
+
+                f"{pe(PE_FOLDER, '📁')} "
+                f"Send your <b>.py</b>, <b>.zip</b> or "
+                f"<b>requirements.txt</b> file "
+                f"directly in this chat.\n\n"
+
+                f"{pe(PE_STAR, '⭐')} "
+                f"After uploading you can configure "
+                f"<b>.env</b> variables or run it directly."
+            ),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # RECOMMENDED INSTALL
+    # --------------------------------------------------------
+
+    elif text.startswith("⚙"):
+
+        bot.reply_to(
+            message,
+            pkg_menu_text(),
+            reply_markup=pkg_menu_markup(),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # MY FILES
+    # --------------------------------------------------------
 
     elif text.startswith("📁"):
-        files = users[uid]["files"]
-        if not files: return bot.reply_to(message, f"{pe(PE_CROSS, '❌')} <b>ɴᴏ ꜰɪʟᴇꜱ.</b>", parse_mode="HTML")
-        buttons = [[InlineKeyboardButton(f"📄 {f}", callback_data=f"file_{f}")] for f in files]
-        bot.reply_to(message, f"{pe(PE_FOLDER, '📁')} <b>ʏᴏᴜʀ ꜰɪʟᴇꜱ:</b>\n<i>Select a file to manage:</i>", reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
+
+        files = user_data["files"]
+
+        if not files:
+
+            bot.reply_to(
+                message,
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>No files.</b>"
+                ),
+                parse_mode="HTML"
+            )
+
+            return
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    f"📄 {f}",
+                    callback_data=f"file_{f}"
+                )
+            ]
+            for f in files
+        ]
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_FOLDER, '📁')} "
+                f"<b>𝐘𝐨𝐮𝐫 𝐅𝐢𝐥𝐞𝐬:</b>"
+            ),
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # SPEED
+    # --------------------------------------------------------
 
     elif text.startswith("⚡"):
-        cpu_ghz, total_ram_gb, free_ram_gb = get_system_info()
-        bot.reply_to(message, f"{pe(PE_FIRE, '⚡')} <b>ꜱᴘᴇᴇᴅ</b>\nᴄᴘᴜ: {round(cpu_ghz, 2)} ɢʜᴢ\nʀᴀᴍ: {round(total_ram_gb, 2)} ɢʙ", parse_mode="HTML")
+
+        start_time = time.time()
+
+        time.sleep(0.1)
+
+        processing_time = (
+            time.time() - start_time
+        )
+
+        cpu_ghz, total_ram_gb, free_ram_gb = (
+            get_system_info()
+        )
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_FIRE, '⚡')} "
+                f"<b>BOT SPEED</b>\n\n"
+
+                f"⏱️ <b>Response:</b> "
+                f"{round(processing_time, 4)} sec\n\n"
+
+                f"⚙️ <b>CPU:</b> "
+                f"{round(cpu_ghz, 2)} GHz\n"
+
+                f"💾 <b>RAM:</b> "
+                f"{round(total_ram_gb, 2)} GB\n"
+
+                f"🟢 <b>FREE:</b> "
+                f"{round(free_ram_gb, 2)} GB"
+            ),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # RESTART
+    # --------------------------------------------------------
 
     elif text.startswith("🔄"):
+
         if uid in active_scripts:
-            for p in list(active_scripts[uid].values()):
-                try: p.kill()
-                except: pass
+
+            for p in list(
+                active_scripts[uid].values()
+            ):
+
+                kill_process_tree(p)
+
             active_scripts[uid] = {}
+
         folder = user_folder(uid)
-        for fname in users[uid]["files"]:
+
+        for fname in user_data["files"]:
+
             if fname.endswith(".py"):
-                path = os.path.join(folder, fname)
-                if os.path.exists(path): start_script(uid, path)
-        bot.reply_to(message, f"{pe(PE_ROCKET, '🔄')} <b>ᴀʟʟ ꜱᴄʀɪᴘᴛꜱ ʀᴇꜱᴛᴀʀᴛᴇᴅ.</b>", parse_mode="HTML")
+
+                path = os.path.join(
+                    folder,
+                    fname
+                )
+
+                if os.path.exists(path):
+
+                    start_script(
+                        uid,
+                        path
+                    )
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_ROCKET, '🔄')} "
+                f"<b>All your scripts have "
+                f"been restarted.</b>"
+            ),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # STOP
+    # --------------------------------------------------------
 
     elif text.startswith("⏹"):
+
         if uid in active_scripts:
-            for p in list(active_scripts[uid].values()):
-                try: p.kill()
-                except: pass
+
+            for p in list(
+                active_scripts[uid].values()
+            ):
+
+                kill_process_tree(p)
+
             active_scripts[uid] = {}
-        bot.reply_to(message, f"{pe(PE_SHIELD, '⏹')} <b>ꜱᴛᴏᴘᴘᴇᴅ.</b>", parse_mode="HTML")
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_SHIELD, '⏹')} "
+                f"<b>Stopped all your scripts.</b>"
+            ),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # STATUS
+    # --------------------------------------------------------
 
     elif text.startswith("🚀"):
+
         total_users = len(users)
-        total_files = sum(len(u.get("files", [])) for u in users.values())
-        running_scripts = sum(len(scripts) for scripts in active_scripts.values())
-        is_locked = "TRUE" if settings.get("bot_password") else "FALSE"
-        
-        # ⬇⬇ PREMIUM EMOJIS ADDED HERE ⬇⬇
-        status_text = (
-            f"{pe(PE_STAR, '📊')} <b>ꜱᴛᴀᴛᴜꜱ</b>\n"
-            f"{pe(PE_USER, '👥')} ᴜꜱᴇʀꜱ: {total_users}\n"
-            f"{pe(PE_FOLDER, '📁')} ꜰɪʟᴇꜱ: {total_files}\n"
-            f"{pe(PE_CHECK, '🟢')} ʀᴜɴɴɪɴɢ: {running_scripts}\n"
-            f"{pe(PE_FIRE, '⏱️')} ᴜᴘᴛɪᴍᴇ: {uptime()}\n"
-            f"{pe(PE_LOCK, '🔒')} ʙᴏᴛ ʟᴏᴄᴋᴇᴅ: {is_locked}"
+
+        total_files = sum(
+            len(u.get("files", []))
+            for u in users.values()
+            if u
         )
-        bot.reply_to(message, status_text, parse_mode="HTML")
 
-    elif text.startswith("💳"):
-        markup = InlineKeyboardMarkup(row_width=1)
-        for k, v in SUBSCRIPTION_PLANS.items():
-            markup.add(InlineKeyboardButton(f"{v['emoji']} {v['name']} - {v['price']}", callback_data=f"pickplan_{k}"))
-        markup.add(InlineKeyboardButton("↩️ ʙᴀᴄᴋ", callback_data="main_menu"))
-        bot.reply_to(message, f"{pe(PE_DIAMOND, '💎')} <b>ꜱᴇʟᴇᴄᴛ ʏᴏᴜʀ ᴘʟᴀɴ</b>", reply_markup=markup, parse_mode="HTML")
+        running_scripts = sum(
+            len(
+                active_scripts.get(
+                    user_id,
+                    {}
+                )
+            )
+            for user_id in users
+        )
 
-    elif text.startswith("💎"):
-        exp = users[uid].get("plan_expiry", "")
-        status = "🆓 ꜰʀᴇᴇ"
-        if exp:
-            try: status = "⭐ ᴘʀᴇᴍɪᴜᴍ" if datetime.fromisoformat(exp) > datetime.now() else "⌛ ᴇxᴘɪʀᴇᴅ"
-            except: pass
-        bot.reply_to(message, f"{pe(PE_DIAMOND, '💎')} <b>ᴍʏ ᴘʟᴀɴ:</b> {status}", parse_mode="HTML")
+        approved_users = sum(
+            1
+            for u in users.values()
+            if u.get("approved", False)
+        )
+
+        pending_users = sum(
+            1
+            for u in users.values()
+            if (
+                not u.get(
+                    "approved",
+                    False
+                )
+                and not u.get(
+                    "rejected",
+                    False
+                )
+            )
+        )
+
+        uptime_seconds = (
+            datetime.now() - START_TIME
+        ).total_seconds()
+
+        hours, remainder = divmod(
+            int(uptime_seconds),
+            3600
+        )
+
+        minutes, seconds = divmod(
+            remainder,
+            60
+        )
+
+        bot.reply_to(
+            message,
+            (
+                f"📊 <b>LIVE STATISTICS</b>\n\n"
+
+                f"👥 <b>Total Users:</b> "
+                f"{total_users}\n"
+
+                f"✅ <b>Approved Users:</b> "
+                f"{approved_users}\n"
+
+                f"⏳ <b>Pending Users:</b> "
+                f"{pending_users}\n"
+
+                f"📁 <b>Total Files:</b> "
+                f"{total_files}\n"
+
+                f"🟢 <b>Running Scripts:</b> "
+                f"{running_scripts}\n"
+
+                f"🔒 <b>Bot Status:</b> "
+                f"{pe(PE_CHECK, '🟢')} "
+                f"<b>ONLINE</b>\n\n"
+
+                f"⏱️ <b>Uptime:</b> "
+                f"{hours}h "
+                f"{minutes}m "
+                f"{seconds}s"
+            ),
+            parse_mode="HTML"
+        )
+
 
 # ============================================================
-# FILE UPLOAD & OWNER APPROVAL
+# DOCUMENT / FILE HANDLER
 # ============================================================
-@bot.message_handler(content_types=["document"])
+
+def env_choice_markup(filename):
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⚙️ Configure .env Variables",
+                callback_data=f"envmenu_{filename}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "▶️ Skip & Run Directly",
+                callback_data=f"skiprun_{filename}"
+            )
+        ]
+    ])
+
+
+def env_choice_text(filename, extra=""):
+
+    return (
+        f"{extra}"
+        f"{pe(PE_CHECK, '✅')} "
+        f"<b>File ready:</b> "
+        f"<code>{safe_html(filename)}</code>\n\n"
+
+        f"{pe(PE_SETTINGS, '⚙️')} "
+        f"<b>Do you want to configure "
+        f".env variables before running?</b>\n\n"
+
+        f"{pe(PE_LOCK, '🔐')} "
+        f"Set <code>BOT_TOKEN</code>, "
+        f"<code>ADMIN_ID</code>, "
+        f"<code>API_ID</code> / <code>API_HASH</code> "
+        f"or any custom variable.\n\n"
+
+        f"{pe(PE_ROCKET, '🚀')} "
+        f"Or skip and run it right away."
+    )
+
+
+@bot.message_handler(
+    content_types=["document"]
+)
 def document_handler(message):
+
     uid = message.from_user.id
+
     ensure_user(uid)
-    if approval_required(message): return
-    
+
+    if approval_required(message):
+        return
+
+    user_data = users[uid]
+
+    # File limit for normal users
+    file_limit = get_file_limit(uid)
+
+    if (
+        file_limit is not None
+        and len(user_data["files"]) >= file_limit
+    ):
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_WARNING, '⚠️')} "
+                f"<b>You have reached the limit "
+                f"of {file_limit} files.</b>\n\n"
+                f"Contact the owner for more."
+            ),
+            parse_mode="HTML"
+        )
+
+        return
+
     doc = message.document
+
     filename = os.path.basename(doc.file_name or "")
-    if not filename.lower().endswith((".py", ".zip", ".txt")):
-        return bot.reply_to(message, f"{pe(PE_CROSS, '❌')} <b>ᴏɴʟʏ .ᴘʏ, .ᴢɪᴘ, .ᴛxᴛ.</b>", parse_mode="HTML")
 
-    msg = bot.reply_to(message, f"{pe(PE_UPLOAD, '⬇️')} <b>ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...</b>", parse_mode="HTML")
+    # Allowed file types
+    if not filename.lower().endswith(
+        (".py", ".zip", ".txt")
+    ):
+
+        bot.reply_to(
+            message,
+            (
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>Only .py, .zip and .txt "
+                f"files are allowed.</b>"
+            ),
+            parse_mode="HTML"
+        )
+
+        return
+
+    folder = user_folder(uid)
+
+    save_path = os.path.join(
+        folder,
+        filename
+    )
+
+    msg = bot.reply_to(
+        message,
+        (
+            f"{pe(PE_UPLOAD, '⬇️')} "
+            f"<b>Downloading...</b>"
+        ),
+        parse_mode="HTML"
+    )
+
     try:
-        file_info = bot.get_file(doc.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        save_path = os.path.join(user_folder(uid), filename)
-        with open(save_path, "wb") as f: f.write(downloaded_file)
-        
-        if filename not in users[uid]["files"]:
-            users[uid]["files"].append(filename)
-            save_data()
 
-        if uid == OWNER_ID:
-            if filename.endswith(".py"): start_script(uid, save_path)
-            bot.edit_message_text(f"{pe(PE_CHECK, '✅')} <b>ꜰɪʟᴇ ᴜᴘʟᴏᴀᴅᴇᴅ & ꜱᴛᴀʀᴛᴇᴅ!</b>", chat_id=message.chat.id, message_id=msg.message_id, parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📁 ᴍʏ ꜰɪʟᴇꜱ", callback_data="myfiles")))
-        else:
-            bot.edit_message_text(f"{pe(PE_WARNING, '⏳')} <b>ꜰɪʟᴇ ᴜᴘʟᴏᴀᴅᴇᴅ! ᴡᴀɪᴛɪɴɢ ꜰᴏʀ ᴀᴅᴍɪɴ ᴀᴘᴘʀᴏᴠᴀʟ...</b>", chat_id=message.chat.id, message_id=msg.message_id, parse_mode="HTML")
-            owner_text = (
-                f"{pe(PE_FOLDER, '📁')} <b>ɴᴇᴡ ꜰɪʟᴇ ᴜᴘʟᴏᴀᴅᴇᴅ</b>\n\n"
-                f"{pe(PE_USER, '👤')} <b>ᴜꜱᴇʀ ɪᴅ:</b> <code>{uid}</code>\n"
-                f"{pe(PE_USER, '👤')} <b>ɴᴀᴍᴇ:</b> {safe_html(message.from_user.first_name)}\n"
-                f"{pe(PE_FOLDER, '📄')} <b>ꜰɪʟᴇ:</b> <code>{safe_html(filename)}</code>"
+        file_info = bot.get_file(
+            doc.file_id
+        )
+
+        downloaded_file = bot.download_file(
+            file_info.file_path
+        )
+
+        # Stop any running copy before overwriting
+        stop_script(uid, save_path)
+
+        with open(
+            save_path,
+            "wb"
+        ) as f:
+
+            f.write(
+                downloaded_file
             )
-            owner_markup = InlineKeyboardMarkup()
-            owner_markup.row(
-                InlineKeyboardButton("✅ ᴀᴘᴘʀᴏᴠᴇ & ʀᴜɴ", callback_data=f"f_approve_{uid}_{filename}"),
-                InlineKeyboardButton("❌ ʀᴇᴊᴇᴄᴛ", callback_data=f"f_reject_{uid}_{filename}")
-            )
-            bot.send_document(OWNER_ID, doc.file_id, caption=owner_text, reply_markup=owner_markup, parse_mode="HTML")
 
     except Exception as e:
-        bot.edit_message_text(f"{pe(PE_CROSS, '❌')} <b>ꜰᴀɪʟᴇᴅ.</b>\n<code>{safe_html(e)}</code>", chat_id=message.chat.id, message_id=msg.message_id, parse_mode="HTML")
+
+        bot.edit_message_text(
+            (
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>Download failed.</b>\n\n"
+                f"<code>{safe_html(e)}</code>"
+            ),
+            chat_id=message.chat.id,
+            message_id=msg.message_id,
+            parse_mode="HTML"
+        )
+
+        return
+
+    if filename not in user_data["files"]:
+
+        user_data["files"].append(
+            filename
+        )
+
+        save_data()
+
+    # --------------------------------------------------------
+    # ZIP FILE
+    # --------------------------------------------------------
+
+    if filename.lower().endswith(".zip"):
+
+        try:
+
+            py_files = []
+
+            base = os.path.abspath(folder)
+
+            with zipfile.ZipFile(
+                save_path,
+                "r"
+            ) as zip_ref:
+
+                for member in zip_ref.namelist():
+
+                    target = os.path.abspath(
+                        os.path.join(folder, member)
+                    )
+
+                    # Block path traversal
+                    if not (
+                        target == base
+                        or target.startswith(base + os.sep)
+                    ):
+                        continue
+
+                    zip_ref.extract(member, folder)
+
+                    if (
+                        not member.endswith("/")
+                        and member.lower().endswith(".py")
+                    ):
+                        py_files.append(member)
+
+            py_files = scan_py_files(folder) or py_files
+
+            for pf in py_files:
+
+                if pf not in user_data["files"]:
+                    user_data["files"].append(pf)
+
+            save_data()
+
+            if py_files:
+
+                preferred = [
+                    "main.py", "bot.py", "app.py",
+                    "run.py", "start.py", "__main__.py"
+                ]
+
+                main_file = None
+
+                for cand in preferred:
+
+                    for pf in py_files:
+
+                        if pf.lower() == cand:
+                            main_file = pf
+                            break
+
+                    if main_file:
+                        break
+
+                if not main_file:
+
+                    for pf in py_files:
+
+                        for cand in preferred:
+
+                            if pf.lower().endswith("/" + cand):
+                                main_file = pf
+                                break
+
+                        if main_file:
+                            break
+
+                if not main_file:
+                    main_file = py_files[0]
+
+                extra = (
+                    f"{pe(PE_CHECK, '📦')} "
+                    f"<b>ZIP extracted successfully.</b>\n"
+                    f"{pe(PE_FOLDER, '📁')} "
+                    f"<b>{len(py_files)}</b> Python file(s) "
+                    f"added to 📁 My Files.\n\n"
+                    + req_note(folder)
+                )
+
+                bot.edit_message_text(
+                    env_choice_text(main_file, extra),
+                    chat_id=message.chat.id,
+                    message_id=msg.message_id,
+                    reply_markup=zip_markup(folder, main_file),
+                    parse_mode="HTML"
+                )
+
+            else:
+
+                bot.edit_message_text(
+                    (
+                        f"{pe(PE_CHECK, '📦')} "
+                        f"<b>ZIP extracted "
+                        f"successfully.</b>"
+                    ),
+                    reply_markup=(
+                        req_buttons(find_requirements(folder))
+                        if find_requirements(folder)
+                        else None
+                    ),
+                    chat_id=message.chat.id,
+                    message_id=msg.message_id,
+                    parse_mode="HTML"
+                )
+
+        except Exception as e:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>ZIP extraction failed.</b>\n\n"
+                    f"<code>{safe_html(e)}</code>"
+                ),
+                chat_id=message.chat.id,
+                message_id=msg.message_id,
+                parse_mode="HTML"
+            )
+
+    # --------------------------------------------------------
+    # TXT / REQUIREMENTS
+    # --------------------------------------------------------
+
+    elif filename.lower().endswith(".txt"):
+
+        bot.edit_message_text(
+            req_prompt_text(filename),
+            chat_id=message.chat.id,
+            message_id=msg.message_id,
+            reply_markup=req_buttons(filename),
+            parse_mode="HTML"
+        )
+
+    # --------------------------------------------------------
+    # PYTHON FILE
+    # --------------------------------------------------------
+
+    elif filename.lower().endswith(".py"):
+
+        bot.edit_message_text(
+            env_choice_text(filename),
+            chat_id=message.chat.id,
+            message_id=msg.message_id,
+            reply_markup=env_choice_markup(filename),
+            parse_mode="HTML"
+        )
+
+    notify_owner(
+        (
+            f"<b>File Uploaded</b>\n"
+            f"{pe(PE_USER, '👤')} "
+            f"User: <code>{uid}</code>\n"
+            f"{pe(PE_FOLDER, '📁')} "
+            f"File: <code>"
+            f"{safe_html(filename)}"
+            f"</code>"
+        ),
+        1
+    )
+
 
 # ============================================================
-# CALLBACKS
+# CALLBACK QUERY
 # ============================================================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_query(call):
+
+def show_myfiles(call):
+
     uid = call.from_user.id
+
+    files = users[uid]["files"]
+
+    if not files:
+
+        bot.edit_message_text(
+            (
+                f"{pe(PE_CROSS, '❌')} "
+                f"<b>No files.</b>"
+            ),
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            parse_mode="HTML"
+        )
+
+        return
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                f"📄 {f}",
+                callback_data=f"file_{f}"
+            )
+        ]
+        for f in files
+    ]
+
+    bot.edit_message_text(
+        (
+            f"{pe(PE_FOLDER, '📁')} "
+            f"<b>𝐘𝐨ᴜʀ 𝐅ɪ𝐥ᴇs:</b>"
+        ),
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        reply_markup=InlineKeyboardMarkup(
+            buttons
+        ),
+        parse_mode="HTML"
+    )
+
+
+@bot.callback_query_handler(
+    func=lambda call: True
+)
+def callback_query(call):
+
+    uid = call.from_user.id
+
     ensure_user(uid)
+
     data = call.data or ""
 
-    if data.startswith("pickplan_"):
-        plan_key = data.replace('pickplan_', '')
-        plan = SUBSCRIPTION_PLANS.get(plan_key)
-        if not plan: return bot.answer_callback_query(call.id, "❌ ɪɴᴠᴀʟɪᴅ ᴘʟᴀɴ.")
-        
-        # ⬇⬇ PREMIUM EMOJIS ADDED HERE (CONFIRM PLAN) ⬇⬇
-        caption = (
-            f"{pe(PE_FOLDER, '📋')} <b>ᴄᴏɴꜰɪʀᴍ ʏᴏᴜʀ ᴘʟᴀɴ</b>\n\n"
-            f"{pe(PE_GIFT, '📦')} <b>{plan['name']}</b>\n"
-            f"• {pe(PE_MONEY, '💳')} <b>ᴘʀɪᴄᴇ:</b> ₹{plan['amt']}\n"
-            f"• {pe(PE_DIAMOND, '💰')} <b>ᴠᴀʟɪᴅɪᴛʏ:</b> {plan['days']} ᴅᴀʏꜱ\n"
-            f"• {pe(PE_FOLDER, '📁')} <b>ꜰɪʟᴇꜱ:</b> {plan['files']} • <b>ᴜᴘʟᴏᴀᴅ:</b> {plan['upload']}\n\n"
-            f"<i>{plan['desc']}</i>\n\n"
-            f"{pe(PE_ROCKET, '🚀')} ᴘʀᴏᴄᴇᴇᴅ ᴛᴏ ᴜᴘɪ ǫʀ ᴘᴀʏᴍᴇɴᴛ?"
-        )
-        
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.row(
-            InlineKeyboardButton("✅ ʏᴇꜱ, ᴄᴏɴᴛɪɴᴜᴇ", callback_data=f"confirm_plan_{plan_key}"),
-            InlineKeyboardButton("❌ ᴄᴀɴᴄᴇʟ", callback_data="cancel_qr")
-        )
-        markup.row(
-            InlineKeyboardButton("⬅️ ʙᴀᴄᴋ", callback_data="back_to_plans"),
-            InlineKeyboardButton("🏠 ᴍᴀɪɴ ᴍᴇɴᴜ", callback_data="main_menu")
-        )
-        
-        bot.edit_message_text(caption, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
-        bot.answer_callback_query(call.id)
-        return
+    # --------------------------------------------------------
+    # APPROVE USER
+    # --------------------------------------------------------
 
-    if data.startswith("confirm_plan_"):
-        plan_key = data.replace('confirm_plan_', '')
-        plan = SUBSCRIPTION_PLANS.get(plan_key)
-        if not plan: return bot.answer_callback_query(call.id, "❌ ɪɴᴠᴀʟɪᴅ ᴘʟᴀɴ.")
-        order_id = hex(random.getrandbits(48))[2:].upper()
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.row(
-            InlineKeyboardButton("📸 Qʀ 1", callback_data=f"show_qr1_{plan_key}_{order_id}"),
-            InlineKeyboardButton("📸 Qʀ 2", callback_data=f"show_qr2_{plan_key}_{order_id}")
-        )
-        markup.row(InlineKeyboardButton("❌ ᴄᴀɴᴄᴇʟ", callback_data="cancel_qr"))
-        bot.edit_message_text(f"{pe(PE_MONEY, '📪')} <b>ꜱᴇʟᴇᴄᴛ ᴘᴀʏᴍᴇɴᴛ ᴏᴘᴛɪᴏɴ:</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
-        bot.answer_callback_query(call.id)
-        return
-        
-    if data == "back_to_plans":
-        markup = InlineKeyboardMarkup(row_width=1)
-        for k, v in SUBSCRIPTION_PLANS.items():
-            markup.add(InlineKeyboardButton(f"{v['emoji']} {v['name']} - {v['price']}", callback_data=f"pickplan_{k}"))
-        markup.add(InlineKeyboardButton("↩️ ʙᴀᴄᴋ", callback_data="main_menu"))
-        bot.edit_message_text(f"{pe(PE_DIAMOND, '💎')} <b>ꜱᴇʟᴇᴄᴛ ʏᴏᴜʀ ᴘʟᴀɴ</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="HTML")
-        bot.answer_callback_query(call.id)
-        return
-        
-    if data == "main_menu":
-        try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
-        bot.answer_callback_query(call.id, "🏠 ʀᴇᴛᴜʀɴᴇᴅ ᴛᴏ ᴍᴀɪɴ ᴍᴇɴᴜ")
-        return
+    if data.startswith("approve_"):
 
-    if data.startswith("show_qr1_"):
-        parts = data.split('_')
-        plan_key = parts[2]
-        order_id = parts[3]
-        plan = SUBSCRIPTION_PLANS.get(plan_key)
-        qr_img = generate_upi_qr(UPI_ID, plan['amt'], UPI_NAME)
-        
-        # ⬇⬇ PREMIUM EMOJIS ADDED HERE (QR CAPTION) ⬇⬇
-        caption = (
-            f"{pe(PE_MONEY, '📪')} <b>ᴜᴘɪ ᴘᴀʏᴍᴇɴᴛ</b>\n\n"
-            f"{pe(PE_STAR, '💸')} <b>ᴘʟᴀɴ:</b> {plan['name']}\n"
-            f"{pe(PE_MONEY, '💰')} <b>ᴀᴍᴏᴜɴᴛ:</b> ₹{plan['amt']}\n"
-            f"{pe(PE_FOLDER, '🏦')} <b>ᴜᴘɪ ɪᴅ:</b> <code>{UPI_ID}</code>\n\n"
-            f"<b>ꜱᴛᴇᴘꜱ:</b> ꜱᴄᴀɴ Qʀ & ᴘᴀʏ, ᴛʜᴇɴ ᴛᴀᴘ ɪ ʜᴀᴠᴇ ᴘᴀɪᴅ."
-        )
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.row(
-            InlineKeyboardButton("📥 ɪ ʜᴀᴠᴇ ᴘᴀɪᴅ", callback_data=f"paid_{plan_key}_{order_id}"),
-            InlineKeyboardButton("❌ ᴄᴀɴᴄᴇʟ", callback_data="cancel_qr")
-        )
-        bot.send_photo(call.message.chat.id, qr_img, caption=caption, reply_markup=markup, parse_mode="HTML")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id)
-        return
+        if uid != OWNER_ID:
 
-    if data.startswith("show_qr2_"):
-        parts = data.split('_')
-        plan_key = parts[2]
-        order_id = parts[3]
-        plan = SUBSCRIPTION_PLANS.get(plan_key)
-        
-        # ⬇⬇ PREMIUM EMOJIS ADDED HERE (CUSTOM QR CAPTION) ⬇⬇
-        caption = (
-            f"{pe(PE_MONEY, '📪')} <b>ᴄᴜꜱᴛᴏᴍ ᴘᴀʏᴍᴇɴᴛ Qʀ</b>\n\n"
-            f"{pe(PE_STAR, '💸')} <b>ᴘʟᴀɴ:</b> {plan['name']}\n"
-            f"{pe(PE_MONEY, '💰')} <b>ᴀᴍᴏᴜɴᴛ:</b> ₹{plan['amt']}\n\n"
-            f"<b>ꜱᴛᴇᴘꜱ:</b> ꜱᴄᴀɴ Qʀ & ᴘᴀʏ, ᴛʜᴇɴ ᴛᴀᴘ ɪ ʜᴀᴠᴇ ᴘᴀɪᴅ."
+            bot.answer_callback_query(
+                call.id,
+                "❌ Owner only!"
+            )
+
+            return
+
+        try:
+
+            target_id = int(
+                data.split(
+                    "_",
+                    1
+                )[1]
+            )
+
+        except:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Invalid user ID."
+            )
+
+            return
+
+        ensure_user(
+            target_id
         )
-        markup = InlineKeyboardMarkup(row_width=2)
-        markup.row(
-            InlineKeyboardButton("📥 ɪ ʜᴀᴠᴇ ᴘᴀɪᴅ", callback_data=f"paid_{plan_key}_{order_id}"),
-            InlineKeyboardButton("❌ ᴄᴀɴᴄᴇʟ", callback_data="cancel_qr")
-        )
-        if os.path.exists(CUSTOM_QR_FILE):
-            with open(CUSTOM_QR_FILE, "rb") as f:
-                bot.send_photo(call.message.chat.id, f, caption=caption, reply_markup=markup, parse_mode="HTML")
-        else:
-            bot.send_message(call.message.chat.id, "⚠️ ᴏᴡɴᴇʀ ɴᴇ ᴄᴜꜱᴛᴏᴍ ǫʀ ꜱᴇᴛ ɴᴀʜɪ ᴋɪʏᴀ ʜᴀɪ. ᴘʟᴇᴀꜱᴇ ᴜꜱᴇ ǫʀ 1.")
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id)
-        return
 
-    if data.startswith("paid_"):
-        parts = data.split('_')
-        plan_key = parts[1]
-        order_id = parts[2] if len(parts) > 2 else "N/A"
-        payment_sessions[uid] = {'plan_key': plan_key, 'order_id': order_id}
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_FIRE, '📈')} <b>ꜱᴇɴᴅ ʏᴏᴜʀ ᴜᴛʀ / ᴛʀᴀɴꜱᴀᴄᴛɪᴏɴ ɪᴅ:</b>\n\nᴇxᴀᴍᴘʟᴇ: <code>412345678901</code>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_utr_step)
-        bot.answer_callback_query(call.id)
-        return
+        users[target_id]["approved"] = True
+        users[target_id]["rejected"] = False
 
-    if data in ["cancel_qr", "cancel_payment"]:
-        if uid in payment_sessions: del payment_sessions[uid]
-        try: bot.delete_message(call.message.chat.id, call.message.message_id)
-        except: pass
-        bot.answer_callback_query(call.id, "ᴄᴀɴᴄᴇʟʟᴇᴅ.")
-        return
-
-    if data.startswith("approve_pay_"):
-        if uid != OWNER_ID: return bot.answer_callback_query(call.id, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ!")
-        parts = data.split("_")
-        target_uid = int(parts[2])
-        plan_key = parts[3]
-        if plan_key not in SUBSCRIPTION_PLANS: return bot.answer_callback_query(call.id, "❌ ɪɴᴠᴀʟɪᴅ ᴘʟᴀɴ.")
-        days = SUBSCRIPTION_PLANS[plan_key]['days']
-        current = users[target_uid].get("plan_expiry", "")
-        try: base = datetime.fromisoformat(current) if current and datetime.fromisoformat(current) > datetime.now() else datetime.now()
-        except: base = datetime.now()
-        new_exp = base + timedelta(days=days)
-        users[target_uid]["plan_expiry"] = new_exp.isoformat()
         save_data()
-        try: bot.send_message(target_uid, f"{pe(PE_GIFT, '🎉')} <b>ᴘᴀʏᴍᴇɴᴛ ᴀᴘᴘʀᴏᴠᴇᴅ!</b>\n\n{pe(PE_DIAMOND, '💎')} ᴘʟᴀɴ: <b>{SUBSCRIPTION_PLANS[plan_key]['name']}</b>", parse_mode="HTML")
-        except: pass
-        try: bot.edit_message_text(f"{pe(PE_CHECK, '✅')} <b>ᴘᴀʏᴍᴇɴᴛ ᴀᴘᴘʀᴏᴠᴇᴅ ꜰᴏʀ {target_uid}</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-        except: pass
-        bot.answer_callback_query(call.id, "✅ ᴀᴘᴘʀᴏᴠᴇᴅ")
+
+        bot.answer_callback_query(
+            call.id,
+            "✅ User Approved!"
+        )
+
+        try:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_APPROVE, '✅')} "
+                    f"<b>USER APPROVED</b>\n\n"
+
+                    f"{pe(PE_USER, '👤')} "
+                    f"<b>User ID:</b> "
+                    f"<code>{target_id}</code>\n\n"
+
+                    f"{pe(PE_ADMIN, '👑')} "
+                    f"Approved by Owner."
+                ),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode="HTML"
+            )
+
+        except:
+            pass
+
+        try:
+
+            bot.send_message(
+                target_id,
+                (
+                    f"{pe(PE_GIFT, '🎁')} "
+                    f"<b>ACCESS APPROVED!</b>\n\n"
+
+                    f"{pe(PE_CHECK, '✅')} "
+                    f"Your account has been "
+                    f"approved by the owner.\n\n"
+
+                    f"{pe(PE_ROCKET, '🚀')} "
+                    f"You can now use "
+                    f"<b>SHIVA HOSTING</b>."
+                ),
+                reply_markup=control_buttons(),
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+
+            print(
+                f"Approval notification error: {e}"
+            )
+
         return
 
-    if data.startswith("reject_pay_"):
-        if uid != OWNER_ID: return bot.answer_callback_query(call.id, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ!")
-        parts = data.split("_")
-        target_uid = int(parts[2])
-        try: bot.send_message(target_uid, f"{pe(PE_CROSS, '❌')} <b>ᴘᴀʏᴍᴇɴᴛ ʀᴇᴊᴇᴄᴛᴇᴅ!</b>\n\nᴘʟᴇᴀꜱᴇ ᴄᴏɴᴛᴀᴄᴛ ᴏᴡɴᴇʀ.", parse_mode="HTML")
-        except: pass
-        try: bot.edit_message_text(f"{pe(PE_CROSS, '❌')} <b>ᴘᴀʏᴍᴇɴᴛ ʀᴇᴊᴇᴄᴛᴇᴅ ꜰᴏʀ {target_uid}</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-        except: pass
-        bot.answer_callback_query(call.id, "❌ ʀᴇᴊᴇᴄᴛᴇᴅ")
-        return
+    # --------------------------------------------------------
+    # REJECT USER
+    # --------------------------------------------------------
 
-    if data.startswith("f_approve_"):
-        if uid != OWNER_ID: return
-        parts = data.split("_")
-        target_uid = int(parts[2])
-        fname = "_".join(parts[3:])
-        path = os.path.join(user_folder(target_uid), fname)
-        if os.path.exists(path) and fname.endswith(".py"):
-            start_script(target_uid, path)
-            bot.answer_callback_query(call.id, "✅ ꜰɪʟᴇ ᴀᴘᴘʀᴏᴠᴇᴅ & ꜱᴛᴀʀᴛᴇᴅ!")
-            try: bot.send_message(target_uid, f"{pe(PE_CHECK, '✅')} <b>ꜰɪʟᴇ ᴀᴘᴘʀᴏᴠᴇᴅ!</b>", parse_mode="HTML")
-            except: pass
-        else:
-            bot.answer_callback_query(call.id, "✅ ꜰɪʟᴇ ᴀᴘᴘʀᴏᴠᴇᴅ!")
-            try: bot.send_message(target_uid, f"{pe(PE_CHECK, '✅')} <b>ꜰɪʟᴇ ᴀᴘᴘʀᴏᴠᴇᴅ!</b>", parse_mode="HTML")
-            except: pass
-        bot.edit_message_caption(f"{pe(PE_CHECK, '✅')} <b>ᴀᴘᴘʀᴏᴠᴇᴅ & ᴘʀᴏᴄᴇꜱꜱᴇᴅ</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-        return
+    if data.startswith("reject_"):
 
-    if data.startswith("f_reject_"):
-        if uid != OWNER_ID: return
-        parts = data.split("_")
-        target_uid = int(parts[2])
-        fname = "_".join(parts[3:])
-        path = os.path.join(user_folder(target_uid), fname)
-        if os.path.exists(path): os.remove(path)
-        if fname in users[target_uid]["files"]: users[target_uid]["files"].remove(fname)
+        if uid != OWNER_ID:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Owner only!"
+            )
+
+            return
+
+        try:
+
+            target_id = int(
+                data.split(
+                    "_",
+                    1
+                )[1]
+            )
+
+        except:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Invalid user ID."
+            )
+
+            return
+
+        ensure_user(
+            target_id
+        )
+
+        users[target_id]["approved"] = False
+        users[target_id]["rejected"] = True
+
         save_data()
-        bot.answer_callback_query(call.id, "❌ ꜰɪʟᴇ ʀᴇᴊᴇᴄᴛᴇᴅ!")
-        try: bot.send_message(target_uid, f"{pe(PE_CROSS, '❌')} <b>ꜰɪʟᴇ ʀᴇᴊᴇᴄᴛᴇᴅ!</b>", parse_mode="HTML")
-        except: pass
-        bot.edit_message_caption(f"{pe(PE_CROSS, '❌')} <b>ʀᴇᴊᴇᴄᴛᴇᴅ</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
+
+        bot.answer_callback_query(
+            call.id,
+            "❌ User Rejected!"
+        )
+
+        try:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>USER REJECTED</b>\n\n"
+
+                    f"{pe(PE_USER, '👤')} "
+                    f"<b>User ID:</b> "
+                    f"<code>{target_id}</code>\n\n"
+
+                    f"{pe(PE_ADMIN, '👑')} "
+                    f"Rejected by Owner."
+                ),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                parse_mode="HTML"
+            )
+
+        except:
+            pass
+
+        try:
+
+            bot.send_message(
+                target_id,
+                (
+                    f"{pe(PE_CROSS, '❌')} "
+                    f"<b>ACCESS REJECTED</b>\n\n"
+                    f"Your request was rejected "
+                    f"by the owner."
+                ),
+                parse_mode="HTML"
+            )
+
+        except:
+            pass
+
         return
+
+    # --------------------------------------------------------
+    # ADMIN PANEL
+    # --------------------------------------------------------
+
+    if data.startswith("adm_"):
+
+        if uid != OWNER_ID:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Owner only!"
+            )
+
+            return
+
+        def adm_edit(text, markup):
+
+            try:
+
+                bot.edit_message_text(
+                    text,
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    reply_markup=markup,
+                    parse_mode="HTML"
+                )
+
+            except Exception:
+                pass
+
+        if data == "adm_home":
+
+            adm_edit(admin_text(), admin_markup())
+
+        elif data == "adm_users":
+
+            lines = []
+
+            for u_id, u in users.items():
+
+                status = (
+                    "👑" if u_id == OWNER_ID
+                    else "✅" if u.get("approved")
+                    else "❌" if u.get("rejected")
+                    else "⏳"
+                )
+
+                lines.append(
+                    f"{status} <code>{u_id}</code> — "
+                    f"{len(u.get('files', []))} files, "
+                    f"{len(active_scripts.get(u_id, {}))} running"
+                )
+
+            body = "\n".join(lines[:60]) or "No users."
+
+            adm_edit(
+                f"{pe(PE_USER, '👥')} <b>ALL USERS</b>\n\n{body}",
+                admin_back_markup()
+            )
+
+        elif data == "adm_pending":
+
+            pending = [
+                u_id for u_id, u in users.items()
+                if not u.get("approved", False)
+                and not u.get("rejected", False)
+            ]
+
+            if not pending:
+
+                adm_edit(
+                    f"{pe(PE_CHECK, '✅')} <b>No pending users.</b>",
+                    admin_back_markup()
+                )
+
+            else:
+
+                adm_edit(
+                    f"{pe(PE_WARNING, '⏳')} "
+                    f"<b>{len(pending)} pending user(s) below.</b>",
+                    admin_back_markup()
+                )
+
+                for u_id in pending[:20]:
+
+                    bot.send_message(
+                        call.message.chat.id,
+                        f"{pe(PE_USER, '👤')} "
+                        f"<b>User ID:</b> <code>{u_id}</code>",
+                        reply_markup=approval_buttons(u_id),
+                        parse_mode="HTML"
+                    )
+
+        elif data == "adm_running":
+
+            lines = []
+
+            for u_id, procs in active_scripts.items():
+
+                for p in procs:
+
+                    lines.append(
+                        f"🟢 <code>{u_id}</code> — "
+                        f"<code>{safe_html(os.path.basename(p))}</code>"
+                    )
+
+            body = "\n".join(lines[:60]) or "No scripts running."
+
+            adm_edit(
+                f"{pe(PE_SERVER, '🟢')} <b>RUNNING SCRIPTS</b>\n\n{body}",
+                admin_back_markup()
+            )
+
+        elif data == "adm_stopall":
+
+            for u_id in list(active_scripts.keys()):
+
+                for p in list(active_scripts[u_id].keys()):
+                    stop_script(u_id, p)
+
+            adm_edit(
+                f"{pe(PE_SHIELD, '⏹')} <b>All scripts stopped.</b>",
+                admin_back_markup()
+            )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # APPROVAL CHECK
+    # --------------------------------------------------------
+
+    if not is_approved(uid):
+
+        bot.answer_callback_query(
+            call.id,
+            "🔐 Owner approval required."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # PACKAGE INSTALLER (MANUAL)
+    # --------------------------------------------------------
+
+    if data in ("pkg_menu", "pkg_cancel"):
+
+        install_waiting_users.pop(uid, None)
+
+        edit_call(call, pkg_menu_text(), pkg_menu_markup())
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    if data == "manual_pkg_input":
+
+        install_waiting_users[uid] = True
+
+        edit_call(
+            call,
+            (
+                f"{pe(PE_STAR, '✍️')} "
+                f"<b>MANUAL PACKAGE INSTALL</b>\n\n"
+                f"Send the package name(s) now.\n"
+                f"Example:\n"
+                f"<pre>pyrogram\nrequests aiohttp</pre>"
+            ),
+            pkg_cancel_markup()
+        )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    if data == "rec_pkg_list":
+
+        install_waiting_users.pop(uid, None)
+
+        edit_call(
+            call,
+            (
+                f"{pe(PE_DIAMOND, '📋')} "
+                f"<b>RECOMMENDED PACKAGES</b>\n\n"
+                f"Tap a package to install "
+                f"<b>only that one</b>."
+            ),
+            rec_list_markup()
+        )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    if data.startswith("recpkg_"):
+
+        name = data[len("recpkg_"):]
+
+        if name == "pytgcalls":
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-deps",
+                PYTG_CALLS_PACKAGE
+            ]
+
+            desc = "pytgcalls (GitHub)"
+
+        elif name in RECOMMENDED_PACKAGES:
+
+            cmd = pip_cmd(name)
+            desc = name
+
+        else:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Unknown package."
+            )
+
+            return
+
+        install_in_thread(
+            call.message.chat.id,
+            [(cmd, desc)]
+        )
+
+        bot.answer_callback_query(
+            call.id,
+            f"📦 Installing {name}"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # REQUIREMENTS.TXT INSTALL
+    # --------------------------------------------------------
+
+    if data.startswith("reqinstall_"):
+
+        rel = data[len("reqinstall_"):]
+
+        path = safe_user_path(uid, rel)
+
+        if not path or not os.path.isfile(path):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        install_in_thread(
+            call.message.chat.id,
+            [(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "-r",
+                    path
+                ],
+                rel
+            )]
+        )
+
+        bot.answer_callback_query(
+            call.id,
+            "📦 Installing requirements..."
+        )
+
+        return
+
+    if data.startswith("reqselect_"):
+
+        rel = data[len("reqselect_"):]
+
+        path = safe_user_path(uid, rel)
+
+        if not path or not os.path.isfile(path):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        pkgs = parse_requirements_file(path)
+
+        if not pkgs:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ No packages found in file."
+            )
+
+            return
+
+        req_select_store[uid] = {
+            "rel": rel,
+            "pkgs": pkgs
+        }
+
+        rows = [
+            [
+                InlineKeyboardButton(
+                    f"📦 {p[:40]}",
+                    callback_data=(
+                        f"pkginst_{p}"
+                        if len(f"pkginst_{p}".encode()) <= 64
+                        else f"reqpkg_{i}"
+                    )
+                )
+            ]
+            for i, p in enumerate(pkgs)
+        ]
+
+        rows.append([
+            InlineKeyboardButton(
+                "⬅ Back",
+                callback_data=f"reqback_{rel}"
+            )
+        ])
+
+        edit_call(
+            call,
+            (
+                f"{pe(PE_SERVER, '☑️')} "
+                f"<b>SELECT PACKAGES</b>\n"
+                f"<code>{safe_html(rel)}</code>\n\n"
+                f"Tap a package to install "
+                f"<b>only that one</b>."
+            ),
+            InlineKeyboardMarkup(rows)
+        )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    if data.startswith("reqback_"):
+
+        rel = data[len("reqback_"):]
+
+        edit_call(call, req_prompt_text(rel), req_buttons(rel))
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    if data.startswith("pkginst_"):
+
+        spec = data[len("pkginst_"):]
+
+        if not spec or not PKG_NAME_RE.match(spec):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Invalid package."
+            )
+
+            return
+
+        install_in_thread(
+            call.message.chat.id,
+            [(pip_cmd(spec), spec)]
+        )
+
+        bot.answer_callback_query(
+            call.id,
+            f"📦 Installing {spec[:40]}"
+        )
+
+        return
+
+    if data.startswith("reqpkg_"):
+
+        try:
+            idx = int(data[len("reqpkg_"):])
+            pkg = req_select_store[uid]["pkgs"][idx]
+        except Exception:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ List expired. Select again."
+            )
+
+            return
+
+        install_in_thread(
+            call.message.chat.id,
+            [(pip_cmd(pkg), pkg)]
+        )
+
+        bot.answer_callback_query(
+            call.id,
+            "📦 Installing..."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # OWNER PANEL
+    # --------------------------------------------------------
+
+    if data.startswith("owner_"):
+
+        if uid != OWNER_ID:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Owner only!"
+            )
+
+            return
+
+        if data != "owner_bcsend":
+            pass
+
+        if data == "owner_home":
+
+            owner_waiting.pop(uid, None)
+
+            edit_call(call, owner_text(), owner_markup())
+
+        elif data == "owner_users":
+
+            t, m = owner_users_view()
+
+            edit_call(call, t, m)
+
+        elif data.startswith("owner_user_"):
+
+            try:
+                target = int(data[len("owner_user_"):])
+            except Exception:
+                target = None
+
+            t, m = owner_user_view(target)
+
+            if t is None:
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ User not found."
+                )
+
+                return
+
+            edit_call(call, t, m)
+
+        elif data.startswith("owner_files_"):
+
+            target = int(data[len("owner_files_"):])
+
+            t, m = owner_files_view(target)
+
+            edit_call(call, t, m)
+
+        elif data.startswith("owner_ban_"):
+
+            target = int(data[len("owner_ban_"):])
+
+            if target == OWNER_ID or target not in users:
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ Not allowed."
+                )
+
+                return
+
+            users[target]["approved"] = False
+            users[target]["rejected"] = True
+
+            for p in list(active_scripts.get(target, {}).keys()):
+                stop_script(target, p)
+
+            save_data()
+
+            try:
+
+                bot.send_message(
+                    target,
+                    (
+                        f"{pe(PE_CROSS, '🚫')} "
+                        f"<b>ACCESS REMOVED</b>\n\n"
+                        f"The owner has removed your access."
+                    ),
+                    parse_mode="HTML"
+                )
+
+            except Exception:
+                pass
+
+            t, m = owner_user_view(target)
+
+            edit_call(call, t, m)
+
+            bot.answer_callback_query(call.id, "🚫 User banned")
+
+            return
+
+        elif data.startswith("owner_appr_"):
+
+            target = int(data[len("owner_appr_"):])
+
+            ensure_user(target)
+
+            users[target]["approved"] = True
+            users[target]["rejected"] = False
+
+            save_data()
+
+            try:
+
+                bot.send_message(
+                    target,
+                    (
+                        f"{pe(PE_GIFT, '🎁')} "
+                        f"<b>ACCESS APPROVED!</b>\n\n"
+                        f"You can use <b>SHIVA HOSTING</b> now."
+                    ),
+                    reply_markup=control_buttons(),
+                    parse_mode="HTML"
+                )
+
+            except Exception:
+                pass
+
+            t, m = owner_user_view(target)
+
+            edit_call(call, t, m)
+
+            bot.answer_callback_query(call.id, "✅ User approved")
+
+            return
+
+        elif data.startswith("owner_setlim_"):
+
+            try:
+                target = int(data[len("owner_setlim_"):])
+            except Exception:
+                target = None
+
+            if target not in users or target == OWNER_ID:
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ Not allowed."
+                )
+
+                return
+
+            owner_waiting[uid] = {
+                "mode": "setlimit",
+                "target": target
+            }
+
+            edit_call(
+                call,
+                (
+                    f"{pe(PE_GIFT, '📈')} "
+                    f"<b>CHANGE FILE LIMIT</b>\n\n"
+                    f"{pe(PE_PHONE, '🆔')} "
+                    f"<b>User:</b> <code>{target}</code>\n"
+                    f"{pe(PE_FOLDER, '📁')} "
+                    f"<b>Current:</b> {limit_label(target)}\n\n"
+                    f"Send the new maximum number of files, "
+                    f"or <code>unlimited</code>."
+                ),
+                InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancel",
+                            callback_data=f"owner_user_{target}"
+                        )
+                    ]
+                ])
+            )
+
+        elif data.startswith("owner_lim_"):
+
+            rest = data[len("owner_lim_"):]
+
+            target_s, op = rest.rsplit("_", 1)
+
+            target = int(target_s)
+
+            if target == OWNER_ID or target not in users:
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ Not allowed."
+                )
+
+                return
+
+            cur = get_file_limit(target)
+
+            if op == "inc":
+
+                new = 1 if cur is None else cur + 1
+
+                if cur is None:
+                    new = -1
+
+            elif op == "dec":
+
+                new = -1 if cur is None else max(0, cur - 1)
+
+            elif op == "unl":
+
+                new = -1
+
+            else:
+
+                new = 2
+
+            users[target]["max_files"] = new
+
+            save_data()
+
+            t, m = owner_user_view(target)
+
+            edit_call(call, t, m)
+
+            bot.answer_callback_query(
+                call.id,
+                f"📦 Limit: {limit_label(target)}"
+            )
+
+            return
+
+        elif data == "owner_running":
+
+            t, m = owner_running_view()
+
+            edit_call(call, t, m)
+
+        elif data.startswith("owner_fstop_"):
+
+            try:
+
+                idx = int(data[len("owner_fstop_"):])
+
+                u_id, p = owner_run_cache[idx]
+
+                stopped = stop_script(u_id, p)
+
+            except Exception:
+
+                stopped = False
+
+            bot.answer_callback_query(
+                call.id,
+                "⏹ Stopped" if stopped else "❌ Not running"
+            )
+
+            t, m = owner_running_view()
+
+            edit_call(call, t, m)
+
+            return
+
+        elif data == "owner_stopall":
+
+            for u_id in list(active_scripts.keys()):
+
+                for p in list(active_scripts[u_id].keys()):
+                    stop_script(u_id, p)
+
+            t, m = owner_running_view()
+
+            edit_call(call, t, m)
+
+            bot.answer_callback_query(call.id, "⏹ All stopped")
+
+            return
+
+        elif data == "owner_broadcast":
+
+            owner_waiting[uid] = {"mode": "broadcast"}
+
+            edit_call(
+                call,
+                (
+                    f"{pe(PE_ADMIN, '📢')} "
+                    f"<b>BROADCAST MESSAGE</b>\n\n"
+                    f"Send the message you want to deliver to "
+                    f"all <b>{len(users)}</b> users."
+                ),
+                InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancel",
+                            callback_data="owner_cancel"
+                        )
+                    ]
+                ])
+            )
+
+        elif data == "owner_bcsend":
+
+            state = owner_waiting.pop(uid, None)
+
+            if not state or state.get("mode") != "bc_confirm":
+
+                bot.answer_callback_query(
+                    call.id,
+                    "❌ Nothing to send."
+                )
+
+                return
+
+            threading.Thread(
+                target=run_broadcast,
+                args=(call.message.chat.id, state["text"]),
+                daemon=True
+            ).start()
+
+            edit_call(
+                call,
+                (
+                    f"{pe(PE_ROCKET, '📢')} "
+                    f"<b>Broadcast started...</b>"
+                ),
+                owner_back_markup()
+            )
+
+            bot.answer_callback_query(call.id, "📢 Sending")
+
+            return
+
+        elif data == "owner_cancel":
+
+            owner_waiting.pop(uid, None)
+
+            edit_call(call, owner_text(), owner_markup())
+
+            bot.answer_callback_query(call.id, "Cancelled")
+
+            return
+
+        elif data == "owner_cleanup":
+
+            t, m = owner_cleanup_view()
+
+            edit_call(call, t, m)
+
+        elif data.startswith("owner_clr_"):
+
+            prefix = do_cleanup(data[len("owner_clr_"):])
+
+            t, m = owner_cleanup_view(prefix)
+
+            edit_call(call, t, m)
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # FILE DETAILS
+    # --------------------------------------------------------
+
+    if data.startswith("file_"):
+
+        filename = data[5:]
+
+        env_waiting_users.pop(uid, None)
+
+        user_data = users.get(
+            uid,
+            {"files": []}
+        )
+
+        if filename not in user_data.get(
+            "files",
+            []
+        ):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        user_name = (
+            call.from_user.first_name
+            or "User"
+        )
+
+        path = os.path.join(
+            user_folder(uid),
+            filename
+        )
+
+        running = (
+            path in active_scripts.get(
+                uid,
+                {}
+            )
+        )
+
+        msg = (
+            f"{pe(PE_STAR, '⚡')} "
+            f"<b>𝐀𝐜𝐭𝐢𝐨𝐧𝐬 𝐟𝐨𝐫</b>\n"
+            f"<code>{safe_html(filename)}</code>\n\n"
+
+            f"{pe(PE_PHONE, '🆔')} "
+            f"<b>𝐔𝐬ᴇʀ ID:</b> "
+            f"<code>{uid}</code>\n"
+
+            f"{pe(PE_USER, '👤')} "
+            f"<b>𝐍ᴀᴍᴇ:</b> "
+            f"<code>{safe_html(user_name)}</code>\n"
+
+            f"{pe(PE_CHECK, '🟢')} "
+            f"<b>𝐑ᴜɴɴɪɴɢ:</b> "
+            f"<code>{1 if running else 0}</code>"
+        )
+
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    "▶ Run",
+                    callback_data=f"run_{filename}"
+                ),
+                InlineKeyboardButton(
+                    "⏹ Stop",
+                    callback_data=f"stop_{filename}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⚙️ Set / Edit .env",
+                    callback_data=f"envmenu_{filename}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📜 Logs",
+                    callback_data=f"logs_{filename}"
+                ),
+                InlineKeyboardButton(
+                    "🗑 Delete",
+                    callback_data=f"del_{filename}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅ Back",
+                    callback_data="myfiles"
+                )
+            ]
+        ]
+
+        try:
+
+            bot.edit_message_text(
+                msg,
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=InlineKeyboardMarkup(
+                    buttons
+                ),
+                parse_mode="HTML"
+            )
+
+        except Exception:
+            pass
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # MY FILES BACK BUTTON
+    # --------------------------------------------------------
 
     if data == "myfiles":
-        files = users[uid]["files"]
-        if not files: return bot.edit_message_text(f"{pe(PE_CROSS, '❌')} <b>ɴᴏ ꜰɪʟᴇꜱ.</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-        buttons = [[InlineKeyboardButton(f"📄 {f}", callback_data=f"file_{f}")] for f in files]
-        bot.edit_message_text(f"{pe(PE_FOLDER, '📁')} <b>ʏᴏᴜʀ ꜰɪʟᴇꜱ:</b>\n<i>Select a file to manage:</i>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
-    elif data.startswith("file_"):
+        env_waiting_users.pop(uid, None)
+
+        show_myfiles(call)
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # LOGS
+    # --------------------------------------------------------
+
+    if data.startswith("logs_"):
+
         fname = data[5:]
-        path = os.path.join(user_folder(uid), fname)
-        running = path in active_scripts.get(uid, {})
-        msg = f"{pe(PE_STAR, '⚡')} <b>ꜰɪʟᴇ ᴍᴀɴᴀɢᴇʀ</b>\n\n{pe(PE_FOLDER, '📁')} <b>ꜰɪʟᴇ:</b> <code>{safe_html(fname)}</code>\n{pe(PE_CHECK, '🟢')} <b>ꜱᴛᴀᴛᴜꜱ:</b> <code>{'Running' if running else 'Stopped'}</code>\n\n<i>Choose an action:</i>"
-        buttons = [
-            [InlineKeyboardButton("▶ ʀᴜɴ", callback_data=f"run_{fname}"), InlineKeyboardButton("⏹ ꜱᴛᴏᴘ", callback_data=f"stop_{fname}")],
-            [InlineKeyboardButton("🗑 ᴅᴇʟᴇᴛᴇ", callback_data=f"del_{fname}")],
-            [InlineKeyboardButton("⬅ ʙᴀᴄᴋ", callback_data="myfiles")]
-        ]
-        bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
-    elif data.startswith("run_"):
-        fname = data[4:]
-        path = os.path.join(user_folder(uid), fname)
-        if start_script(uid, path): bot.answer_callback_query(call.id, f"▶ {fname} ꜱᴛᴀʀᴛᴇᴅ")
-        else: bot.answer_callback_query(call.id, "⚠️ ᴀʟʀᴇᴀᴅʏ ʀᴜɴɴɪɴɢ.")
-        return
+        path = os.path.join(
+            user_folder(uid),
+            fname
+        )
 
-    elif data.startswith("stop_"):
-        fname = data[5:]
-        path = os.path.join(user_folder(uid), fname)
-        proc = active_scripts.get(uid, {}).get(path)
-        if proc:
-            proc.kill()
-            active_scripts[uid].pop(path, None)
-            bot.answer_callback_query(call.id, f"⏹ {fname} ꜱᴛᴏᴘᴘᴇᴅ")
-        else: bot.answer_callback_query(call.id, "❌ ɴᴏᴛ ʀᴜɴɴɪɴɢ")
-        return
-        
-    elif data.startswith("del_"):
-        fname = data[4:]
-        path = os.path.join(user_folder(uid), fname)
-        proc = active_scripts.get(uid, {}).get(path)
-        if proc: proc.kill()
-        if os.path.exists(path): os.remove(path)
-        if fname in users[uid]["files"]: users[uid]["files"].remove(fname)
-        save_data()
-        bot.answer_callback_query(call.id, "🗑 ꜰɪʟᴇ ᴅᴇʟᴇᴛᴇᴅ!")
-        files = users[uid]["files"]
-        if not files: return bot.edit_message_text(f"{pe(PE_CROSS, '❌')} <b>ɴᴏ ꜰɪʟᴇꜱ.</b>", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="HTML")
-        buttons = [[InlineKeyboardButton(f"📄 {f}", callback_data=f"file_{f}")] for f in files]
-        bot.edit_message_text(f"{pe(PE_FOLDER, '📁')} <b>ʏᴏᴜʀ ꜰɪʟᴇꜱ:</b>\n<i>Select a file to manage:</i>", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
-        return
+        lines = logs_store.get(uid, {}).get(path, [])[-30:]
 
-    elif data == "admin_changepass":
-        if not is_owner(uid): return bot.answer_callback_query(call.id, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ!")
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_LOCK, '🔐')} <b>ꜱᴇɴᴅ ɴᴇᴡ ʙᴏᴛ ᴘᴀꜱꜱᴡᴏʀᴅ:</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_change_password)
-        bot.answer_callback_query(call.id)
+        if lines:
 
-    elif data == "admin_ban":
-        if not is_admin(uid): return bot.answer_callback_query(call.id, "❌ ᴀᴅᴍɪɴ ᴏɴʟʏ!")
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_CROSS, '🚫')} <b>ꜱᴇɴᴅ ᴜꜱᴇʀ ɪᴅ ᴛᴏ ʙᴀɴ:</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_ban_user)
-        bot.answer_callback_query(call.id)
+            log_text = "\n".join(lines)
 
-    elif data == "admin_unban":
-        if not is_admin(uid): return bot.answer_callback_query(call.id, "❌ ᴀᴅᴍɪɴ ᴏɴʟʏ!")
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_CHECK, '✅')} <b>ꜱᴇɴᴅ ᴜꜱᴇʀ ɪᴅ ᴛᴏ ᴜɴʙᴀɴ:</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_unban_user)
-        bot.answer_callback_query(call.id)
+            if len(log_text) > 3300:
+                log_text = "..." + log_text[-3300:]
 
-    elif data == "admin_addadmin":
-        if not is_owner(uid): return bot.answer_callback_query(call.id, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ!")
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_ADMIN, '👑')} <b>ꜱᴇɴᴅ ᴜꜱᴇʀ ɪᴅ ᴛᴏ ᴍᴀᴋᴇ ᴀᴅᴍɪɴ:</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_add_admin)
-        bot.answer_callback_query(call.id)
-
-    elif data == "admin_removeadmin":
-        if not is_owner(uid): return bot.answer_callback_query(call.id, "❌ ᴏᴡɴᴇʀ ᴏɴʟʏ!")
-        msg = bot.send_message(call.message.chat.id, f"{pe(PE_CROSS, '🗑')} <b>ꜱᴇɴᴅ ᴀᴅᴍɪɴ ᴜꜱᴇʀ ɪᴅ ᴛᴏ ʀᴇᴍᴏᴠᴇ:</b>", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_remove_admin)
-        bot.answer_callback_query(call.id)
-        
-    elif data == "admin_list":
-        if not is_admin(uid): return bot.answer_callback_query(call.id, "❌ ᴀᴅᴍɪɴ ᴏɴʟʏ!")
-        admins = settings.get("admins", [])
-        admin_text = f"{pe(PE_ADMIN, '👑')} <b>ᴀᴅᴍɪɴ ʟɪꜱᴛ</b>\n\n"
-        admin_text += f"👑 <b>ᴏᴡɴᴇʀ:</b> <code>{OWNER_ID}</code>\n\n"
-        if admins:
-            admin_text += "🛡️ <b>ᴀᴅᴍɪɴꜱ:</b>\n" + "\n".join([f"• <code>{a}</code>" for a in admins])
         else:
-            admin_text += "🛡️ <b>ᴀᴅᴍɪɴꜱ:</b> ɴᴏ ᴀᴅᴍɪɴꜱ."
+
+            log_text = "No logs yet."
+
+        running = path in active_scripts.get(uid, {})
+
+        try:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_SERVER, '📜')} "
+                    f"<b>LOGS</b>\n"
+                    f"<code>{safe_html(fname)}</code>\n"
+                    f"{pe(PE_CHECK, '🟢')} "
+                    f"<b>Running:</b> "
+                    f"<code>{1 if running else 0}</code>\n\n"
+                    f"<pre>{safe_html(log_text)}</pre>"
+                ),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Refresh",
+                            callback_data=f"logs_{fname}"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "⬅ Back",
+                            callback_data=f"file_{fname}"
+                        )
+                    ]
+                ]),
+                parse_mode="HTML"
+            )
+
+        except Exception:
+            pass
+
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, admin_text, parse_mode="HTML")
+
+        return
+
+    # --------------------------------------------------------
+    # DELETE FILE
+    # --------------------------------------------------------
+
+    if data.startswith("del_"):
+
+        fname = data[4:]
+
+        path = os.path.join(
+            user_folder(uid),
+            fname
+        )
+
+        stop_script(uid, path)
+
+        try:
+
+            if os.path.isfile(path):
+                os.remove(path)
+
+        except Exception as e:
+
+            print(f"Delete error: {e}")
+
+        if fname in users[uid]["files"]:
+            users[uid]["files"].remove(fname)
+
+        users[uid].setdefault("env_vars", {}).pop(fname, None)
+
+        logs_store.get(uid, {}).pop(path, None)
+
+        save_data()
+
+        bot.answer_callback_query(
+            call.id,
+            f"🗑 {fname} deleted"
+        )
+
+        notify_owner(
+            (
+                f"<b>File Deleted</b>\n"
+                f"User: <code>{uid}</code>\n"
+                f"File: <code>"
+                f"{safe_html(fname)}"
+                f"</code>"
+            ),
+            4
+        )
+
+        show_myfiles(call)
+
+        return
+
+    # --------------------------------------------------------
+    # .ENV MENU
+    # --------------------------------------------------------
+
+    if data.startswith("envmenu_"):
+
+        fname = data[len("envmenu_"):]
+
+        env_waiting_users.pop(uid, None)
+
+        if not os.path.exists(
+            os.path.join(user_folder(uid), fname)
+        ):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        send_env_menu(
+            call.message.chat.id,
+            uid,
+            fname,
+            message_id=call.message.message_id
+        )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # SET .ENV VARIABLE (ask for input)
+    # --------------------------------------------------------
+
+    if data.startswith("setenv_"):
+
+        rest = data[len("setenv_"):]
+
+        mode = None
+        fname = None
+
+        for m in ("BOT_TOKEN", "ADMIN_ID", "API", "CUSTOM"):
+
+            if rest.startswith(m + "_"):
+
+                mode = m
+                fname = rest[len(m) + 1:]
+                break
+
+        if not mode:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Invalid option."
+            )
+
+            return
+
+        env_waiting_users[uid] = {
+            "mode": mode,
+            "filename": fname,
+            "step": "API_ID"
+        }
+
+        try:
+
+            bot.edit_message_text(
+                env_ask_markup_text(mode, fname),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=env_prompt_markup(fname),
+                parse_mode="HTML"
+            )
+
+        except Exception:
+
+            bot.send_message(
+                call.message.chat.id,
+                env_ask_markup_text(mode, fname),
+                reply_markup=env_prompt_markup(fname),
+                parse_mode="HTML"
+            )
+
+        bot.answer_callback_query(call.id)
+
+        return
+
+    # --------------------------------------------------------
+    # CANCEL .ENV INPUT
+    # --------------------------------------------------------
+
+    if data.startswith("cancelenv_"):
+
+        fname = data[len("cancelenv_"):]
+
+        env_waiting_users.pop(uid, None)
+
+        send_env_menu(
+            call.message.chat.id,
+            uid,
+            fname,
+            message_id=call.message.message_id
+        )
+
+        bot.answer_callback_query(call.id, "Cancelled")
+
+        return
+
+    # --------------------------------------------------------
+    # CLEAR .ENV
+    # --------------------------------------------------------
+
+    if data.startswith("clearenv_"):
+
+        fname = data[len("clearenv_"):]
+
+        env_waiting_users.pop(uid, None)
+
+        clear_env_vars(uid, fname)
+
+        send_env_menu(
+            call.message.chat.id,
+            uid,
+            fname,
+            prefix=(
+                f"{pe(PE_CHECK, '✅')} "
+                f"<b>All .env variables cleared.</b>\n\n"
+            ),
+            message_id=call.message.message_id
+        )
+
+        bot.answer_callback_query(call.id, "🗑 Cleared")
+
+        return
+
+    # --------------------------------------------------------
+    # SKIP & RUN / SAVE & RUN
+    # --------------------------------------------------------
+
+    if data.startswith("skiprun_"):
+
+        fname = data[len("skiprun_"):]
+
+        env_waiting_users.pop(uid, None)
+
+        path = os.path.join(
+            user_folder(uid),
+            fname
+        )
+
+        if (
+            fname not in users[uid]["files"]
+            or not os.path.exists(path)
+        ):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        if not fname.lower().endswith(".py"):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Only Python files can run."
+            )
+
+            return
+
+        # Make python-dotenv pick up this file's variables
+        if get_file_env(uid, fname):
+            write_env_file(uid, fname)
+
+        start_script(
+            uid,
+            path
+        )
+
+        try:
+
+            bot.edit_message_text(
+                (
+                    f"{pe(PE_ROCKET, '⚡')} "
+                    f"<b>Started "
+                    f"{safe_html(fname)}!</b>\n\n"
+
+                    f"{pe(PE_CHECK, '✅')} "
+                    f"Your script is now running.\n"
+                    f"{pe(PE_SERVER, '📜')} "
+                    f"Check output in "
+                    f"📁 My Files → Logs."
+                ),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "📜 Logs",
+                            callback_data=f"logs_{fname}"
+                        ),
+                        InlineKeyboardButton(
+                            "⬅ Back",
+                            callback_data=f"file_{fname}"
+                        )
+                    ]
+                ]),
+                parse_mode="HTML"
+            )
+
+        except Exception:
+            pass
+
+        bot.answer_callback_query(
+            call.id,
+            f"▶ {fname} started"
+        )
+
+        notify_owner(
+            (
+                f"<b>Script Started</b>\n"
+                f"User: <code>{uid}</code>\n"
+                f"File: <code>"
+                f"{safe_html(fname)}"
+                f"</code>"
+            ),
+            2
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # RUN FILE
+    # --------------------------------------------------------
+
+    if data.startswith("run_"):
+
+        fname = data[4:]
+
+        if fname not in users[uid]["files"]:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        path = os.path.join(
+            user_folder(uid),
+            fname
+        )
+
+        if not os.path.exists(path):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ File not found."
+            )
+
+            return
+
+        if not fname.lower().endswith(".py"):
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Only Python files can run."
+            )
+
+            return
+
+        if get_file_env(uid, fname):
+            write_env_file(uid, fname)
+
+        start_script(
+            uid,
+            path
+        )
+
+        bot.answer_callback_query(
+            call.id,
+            f"▶ {fname} started"
+        )
+
+        notify_owner(
+            (
+                f"<b>Script Started</b>\n"
+                f"User: <code>{uid}</code>\n"
+                f"File: <code>"
+                f"{safe_html(fname)}"
+                f"</code>"
+            ),
+            2
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # STOP FILE
+    # --------------------------------------------------------
+
+    if data.startswith("stop_"):
+
+        fname = data[5:]
+
+        path = os.path.join(
+            user_folder(uid),
+            fname
+        )
+
+        if stop_script(uid, path):
+
+            bot.answer_callback_query(
+                call.id,
+                f"⏹ {fname} stopped"
+            )
+
+            notify_owner(
+                (
+                    f"<b>Script Stopped</b>\n"
+                    f"User: <code>{uid}</code>\n"
+                    f"File: <code>"
+                    f"{safe_html(fname)}"
+                    f"</code>"
+                ),
+                3
+            )
+
+        else:
+
+            bot.answer_callback_query(
+                call.id,
+                "❌ Script not running"
+            )
+
+        return
+
 
 # ============================================================
-# PAYMENT & ADMIN STEP HANDLERS
+# RESTORE ALL SCRIPTS
 # ============================================================
-def process_utr_step(message):
-    uid = message.from_user.id
-    if uid not in payment_sessions: return bot.send_message(message.chat.id, "ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.")
-    utr = (message.text or "").strip()
-    if not utr or len(utr) < 6: return bot.send_message(message.chat.id, "❌ ɪɴᴠᴀʟɪᴅ ᴜᴛʀ.")
-    payment_sessions[uid]['utr'] = utr
-    msg = bot.send_message(message.chat.id, f"{pe(PE_STAR, '🌐')} <b>ᴜᴛʀ ꜱᴀᴠᴇᴅ</b>\n\n⏳ ꜱᴇɴᴅ ᴘᴀʏᴍᴇɴᴛ ꜱᴄʀᴇᴇɴꜱʜᴏᴛ ᴀꜱ ᴀ ᴘʜᴏᴛᴏ.", parse_mode="HTML")
-    bot.register_next_step_handler(msg, process_screenshot_step)
 
-def process_screenshot_step(message):
-    uid = message.from_user.id
-    if uid not in payment_sessions: return bot.send_message(message.chat.id, "ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ.")
-    if not message.photo and not message.document: return bot.send_message(message.chat.id, "❌ ꜱᴇɴᴅ ᴀ ᴘʜᴏᴛᴏ.")
-    session = payment_sessions[uid]
-    plan_key = session['plan_key']
-    utr = session.get('utr', 'N/A')
-    plan = SUBSCRIPTION_PLANS.get(plan_key)
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.row(
-        InlineKeyboardButton("✅ ᴀᴘᴘʀᴏᴠᴇ", callback_data=f"approve_pay_{uid}_{plan_key}"),
-        InlineKeyboardButton("❌ ʀᴇᴊᴇᴄᴛ", callback_data=f"reject_pay_{uid}")
+def restore_all():
+
+    load_data()
+
+    print(
+        "🔄 Restoring scripts..."
     )
-    owner_msg = f"{pe(PE_SERVER, '🔔')} <b>ɴᴇᴡ ᴘᴀʏᴍᴇɴᴛ</b>\n{pe(PE_USER, '👤')} <code>{uid}</code>\n{pe(PE_FOLDER, '📦')} {plan['name']}\n{pe(PE_FIRE, '🔢')} ᴜᴛʀ: <code>{safe_html(utr)}</code>"
-    bot.send_message(OWNER_ID, owner_msg, reply_markup=markup, parse_mode="HTML")
-    bot.forward_message(OWNER_ID, message.chat.id, message.message_id)
-    bot.reply_to(message, f"{pe(PE_CHECK, '✅')} ᴘʀᴏᴏꜰ ꜱᴇɴᴛ! ᴡᴀɪᴛ ꜰᴏʀ ᴀᴘᴘʀᴏᴠᴀʟ.", parse_mode="HTML")
-    del payment_sessions[uid]
 
-def process_change_password(message):
-    if not is_owner(message.from_user.id): return
-    settings["bot_password"] = (message.text or "").strip()
-    save_data()
-    bot.reply_to(message, f"{pe(PE_CHECK, '✅')} <b>ᴘᴀꜱꜱᴡᴏʀᴅ ᴜᴘᴅᴀᴛᴇᴅ!</b>", parse_mode="HTML")
+    for uid, data in users.items():
 
-def process_ban_user(message):
-    if not is_admin(message.from_user.id): return
-    try: target = int(message.text.strip())
-    except: return bot.reply_to(message, "❌ ɪɴᴠᴀʟɪᴅ ɪᴅ")
-    ensure_user(target)
-    users[target]["banned"] = True
-    save_data()
-    bot.reply_to(message, f"{pe(PE_CROSS, '🚫')} <b>ᴜꜱᴇʀ ʙᴀɴɴᴇᴅ!</b>", parse_mode="HTML")
+        if (
+            uid != OWNER_ID
+            and not data.get(
+                "approved",
+                False
+            )
+        ):
+            continue
 
-def process_unban_user(message):
-    if not is_admin(message.from_user.id): return
-    try: target = int(message.text.strip())
-    except: return bot.reply_to(message, "❌ ɪɴᴠᴀʟɪᴅ ɪᴅ")
-    ensure_user(target)
-    users[target]["banned"] = False
-    save_data()
-    bot.reply_to(message, f"{pe(PE_CHECK, '✅')} <b>ᴜꜱᴇʀ ᴜɴʙᴀɴɴᴇᴅ!</b>", parse_mode="HTML")
+        folder = user_folder(uid)
 
-def process_add_admin(message):
-    if not is_owner(message.from_user.id): return
-    try: target = int(message.text.strip())
-    except: return bot.reply_to(message, "❌ ɪɴᴠᴀʟɪᴅ ɪᴅ")
-    if target not in settings["admins"]:
-        settings["admins"].append(target)
-        save_data()
-    bot.reply_to(message, f"{pe(PE_ADMIN, '👑')} <b>ᴀᴅᴍɪɴ ᴀᴅᴅᴇᴅ!</b>", parse_mode="HTML")
+        for f in data.get(
+            "files",
+            []
+        ):
 
-def process_remove_admin(message):
-    if not is_owner(message.from_user.id): return
-    try: target = int(message.text.strip())
-    except: return bot.reply_to(message, "❌ ɪɴᴠᴀʟɪᴅ ɪᴅ")
-    if target in settings["admins"]:
-        settings["admins"].remove(target)
-        save_data()
-    bot.reply_to(message, f"{pe(PE_CROSS, '🗑')} <b>ᴀᴅᴍɪɴ ʀᴇᴍᴏᴠᴇᴅ!</b>", parse_mode="HTML")
+            if f.endswith(".py"):
+
+                path = os.path.join(
+                    folder,
+                    f
+                )
+
+                if os.path.exists(path):
+
+                    start_script(
+                        uid,
+                        path
+                    )
+
+    print(
+        "✅ System Ready"
+    )
+
 
 # ============================================================
-# START BOT
+# BOT START
 # ============================================================
+
 if __name__ == "__main__":
-    print("SHIVA HOSTING BOT IS RUNNING 🏃")
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+
+    print(
+        "=================================================="
+    )
+
+    print(
+        "🔧 SHIVA HOSTING"
+    )
+
+    print(
+        "=================================================="
+    )
+
+    if not BOT_TOKEN:
+
+        print(
+            "❌ BOT_TOKEN is not configured!"
+        )
+
+        print(
+            "Set BOT_TOKEN in Render Environment Variables."
+        )
+
+        sys.exit(1)
+
+    start_keepalive_server()
+
+    restore_all()
+
+    print(
+        "SHIVA HOSTING IS RUNNING 🏃"
+    )
+
+    bot.infinity_polling(
+        skip_pending=True,
+        timeout=60,
+        long_polling_timeout=60
+    )
